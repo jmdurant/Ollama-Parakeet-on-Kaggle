@@ -117,7 +117,6 @@ For issues related to:
 - Ollama: https://github.com/ollama/ollama
 - Ngrok: https://ngrok.com/docs
 - Kaggle: https://www.kaggle.com/docs/notebooks
-Here is a short guidelines section for your README.md:
 
 ## Guidelines for Use
 
