@@ -34,8 +34,8 @@ os.environ['CUDA_HOME'] = '/usr/local/cuda'
 os.environ['OLLAMA_GPU_LAYERS'] = '100'  # Enable GPU acceleration
 os.environ["OLLAMA_SCHED_SPREAD"] = "0,1"
 # Ngrok configuration
-STATIC_DOMAIN = "You need to make a ngrok static domain"
-NGROK_TOKEN = 'Auth Token'
+STATIC_DOMAIN = "You need to set up a free static domain from ngrok"
+NGROK_TOKEN = 'This is your main auth token from ngrok'
 
 async def run_process(cmd):
     """Run a command and stream its output"""
@@ -64,6 +64,11 @@ async def wait_for_url(url, timeout=30):
             pass
         await asyncio.sleep(1)
     raise RuntimeError(f"Timeout waiting for {url}")
+
+def setup_ngrok_config():
+    """Create ngrok config file for static domain"""
+    # Create config directory
+    os.makedirs('/root/.config/ngrok', exist_ok=True)
     
     # Create config content
     config_content = f"""authtoken: {NGROK_TOKEN}
@@ -130,6 +135,8 @@ async def main():
     subprocess.run(["fuser", "-k", "11434/tcp"], stderr=subprocess.DEVNULL)
     print("Cleaned up existing processes")
 
+    # Set up ngrok config for static domain
+    setup_ngrok_config()
     
     # Start Ollama server with GPU support
     print("Starting Ollama server with GPU acceleration...")
@@ -148,7 +155,7 @@ async def main():
     
     # Get tunnel URL
     public_url = await get_tunnel_url()
-    print(f'ngrok URL: {public_url}')
+    print(f'ngrok URL: {public_url}')   
     print(f"Ready! Use this endpoint: {public_url}/api/chat")
     print("Keep this notebook running to maintain the connection")
     print("GPU acceleration is enabled")
