@@ -89,6 +89,23 @@ Parakeet STT: https://parakeet-[your-static-domain].ngrok-free.app/transcribe
 
 The servers will remain active as long as the notebook is running.
 
+## Testing the Services
+
+### Automated Testing
+Two test scripts are provided to verify your services are working:
+
+1. **test_services.py** - Automated test suite for both services
+```python
+# Update the URLs in the script with your ngrok endpoints
+python test_services.py
+```
+
+2. **generate_test_audio.py** - Creates test audio files for Parakeet
+```python
+python generate_test_audio.py
+# This creates test WAV files you can use to test transcription
+```
+
 ## API Examples
 
 ### Ollama Chat Completion
