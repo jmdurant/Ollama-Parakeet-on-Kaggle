@@ -46,6 +46,7 @@ os.environ['LD_LIBRARY_PATH'] = '/usr/local/cuda/lib64:/usr/lib64-nvidia:/usr/lo
 os.environ['CUDA_HOME'] = '/usr/local/cuda'
 os.environ['OLLAMA_GPU_LAYERS'] = '100'  # Enable GPU acceleration
 os.environ["OLLAMA_SCHED_SPREAD"] = "0,1"
+os.environ['OLLAMA_KEEP_ALIVE'] = '0'  # Never unload models (0 = keep forever)
 # Ngrok configuration - check if already defined in notebook
 if 'STATIC_DOMAIN' not in globals():
     STATIC_DOMAIN = "You need to set up a free static domain from ngrok"

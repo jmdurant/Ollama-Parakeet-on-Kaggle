@@ -77,6 +77,7 @@ os.environ['CUDA_HOME'] = '/usr/local/cuda'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'  # Use both T4 GPUs
 os.environ['OLLAMA_GPU_LAYERS'] = '100'
 os.environ["OLLAMA_SCHED_SPREAD"] = "0,1"  # Spread across both GPUs
+os.environ['OLLAMA_KEEP_ALIVE'] = '0'  # Never unload models (0 = keep forever)
 
 # Parakeet configuration
 PARAKEET_CONFIG = {
@@ -490,8 +491,37 @@ async def main():
     
     print("Models ready!")
     
+    # Pre-load primary model to avoid cold start delays
+    print("\nPre-loading primary model into memory...")
+    print("Pre-loading deepseek-r1:14b as default model...")
+    
+    preload_data = {
+        "model": "deepseek-r1:14b",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "stream": False
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post('http://127.0.0.1:11434/api/chat', json=preload_data, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    load_time = result.get('total_duration', 0)/1_000_000_000
+                    print(f"✓ DeepSeek pre-loaded (took {load_time:.1f}s)")
+                    print(f"  Model will stay in memory (OLLAMA_KEEP_ALIVE=0)")
+                    print(f"  Switching to qwen3-coder will take ~40s but both stay loaded once used")
+                else:
+                    print("⚠ Could not pre-load DeepSeek")
+    except Exception as e:
+        print(f"⚠ Pre-load error: {e}")
+    
+    print("\nMemory status:")
+    print("  DeepSeek-R1 14B: Loaded (~10GB)")
+    print("  Qwen3-Coder 30B: On-demand (~18GB)")
+    print("  Parakeet: Loaded (~3GB)")
+    print("  Total when both LLMs loaded: ~31GB/32GB")
+    
     # Start Parakeet server
-    print("Starting Parakeet STT server...")
+    print("\nStarting Parakeet STT server...")
     parakeet_task = asyncio.create_task(run_parakeet_server())
     
     # Give Parakeet time to start
