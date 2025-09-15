@@ -68,9 +68,9 @@ Configure this to suit your needs and demands
 - `qwen3-coder:30b`
 
 **Integrated Version (main_integrated.py)**:
-- `deepseek-r1:14b` (same as standalone)
-- `qwen3-coder:30b` (same as standalone)
-- `nvidia/parakeet-tdt-0.6b-v2` (auto-downloaded)
+- `gpt-oss:20b` (GPT-4 Turbo comparable, Mixture-of-Experts)
+- `nvidia/parakeet-tdt-0.6b-v2` (auto-downloaded STT)
+- Additional models can be pulled on-demand
 
 ## Usage
 
@@ -113,7 +113,7 @@ python generate_test_audio.py
 curl -X POST https://your-domain.ngrok-free.app/api/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-r1:14b",
+    "model": "gpt-oss:20b",
     "messages": [
       {"role": "user", "content": "Hello, how are you?"}
     ]
@@ -171,12 +171,15 @@ Either add or remove each model name of your choice from the script.
 ## GPU Memory Allocation
 
 With T4x2 (2 × 16GB = 32GB total):
+- **GPT-OSS 20B**: ~12-14GB VRAM
 - **Parakeet TDT 0.6B**: ~2-3GB VRAM
-- **DeepSeek-R1 14B**: ~8-10GB VRAM (fp16)
-- **Qwen3-Coder 30B**: ~16-18GB VRAM (Q4_K_M quantized)
 - **Overhead & Processing**: ~2-3GB
 
-Total usage: ~28-30GB, efficiently utilizing available VRAM while leaving some headroom.
+**Current usage: ~15-17GB, leaving ~15-17GB free** for:
+- Additional models on-demand
+- RAG vector databases
+- Embeddings models
+- Other services
 
 ## Performance Benchmarks
 
@@ -186,7 +189,10 @@ Tested on Kaggle T4x2 (dual T4 GPUs):
 | Model | Size | Quantization | Generation Speed | Prompt Processing |
 |-------|------|--------------|------------------|-------------------|
 | **Qwen3-Coder** | 30B | Q4_K_M | **42.8 tokens/sec** | 641 tokens/sec |
+| **GPT-OSS** | 20B | TBD | *To be tested* | *To be tested* |
 | **DeepSeek-R1** | 14B | fp16 | **20.2 tokens/sec** | 1,031 tokens/sec |
+
+*Note: GPT-OSS is a Mixture-of-Experts model comparable to GPT-4 Turbo for code tasks*
 
 ### Response Times
 - Simple queries: 2-3 seconds

@@ -45,7 +45,7 @@ async def test_ollama():
             # Test 2: Test chat completion
             print("\nTesting chat completion...")
             chat_data = {
-                "model": "deepseek-r1:14b",
+                "model": "gpt-oss:20b",
                 "messages": [
                     {"role": "user", "content": "Say 'Hello, Ollama is working!' in exactly those words."}
                 ],

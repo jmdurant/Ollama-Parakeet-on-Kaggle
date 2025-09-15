@@ -480,23 +480,24 @@ async def main():
     
     # Pull/update Ollama models
     print("Checking and updating models (will skip if already up-to-date)...")
-    print("Note: T4x2 provides 32GB total VRAM - sufficient for both services")
+    print("Note: T4x2 provides 32GB total VRAM")
     
-    # Ollama pull is smart - only downloads if needed or if updates available
-    print("Checking deepseek-r1:14b...")
-    await run_process(['ollama', 'pull', 'deepseek-r1:14b'])
+    # Only pull GPT-OSS:20B for faster startup
+    print("Checking gpt-oss:20b...")
+    await run_process(['ollama', 'pull', 'gpt-oss:20b'])
     
-    print("Checking qwen3-coder:30b...")
-    await run_process(['ollama', 'pull', 'qwen3-coder:30b'])
+    # Skip other models for faster startup
+    # Uncomment if needed:
+    # await run_process(['ollama', 'pull', 'qwen3-coder:30b'])
     
     print("Models ready!")
     
     # Pre-load primary model to avoid cold start delays
     print("\nPre-loading primary model into memory...")
-    print("Pre-loading deepseek-r1:14b as default model...")
+    print("Pre-loading gpt-oss:20b as default model...")
     
     preload_data = {
-        "model": "deepseek-r1:14b",
+        "model": "gpt-oss:20b",
         "messages": [{"role": "user", "content": "Hi"}],
         "stream": False
     }
@@ -506,19 +507,19 @@ async def main():
                 if resp.status == 200:
                     result = await resp.json()
                     load_time = result.get('total_duration', 0)/1_000_000_000
-                    print(f"✓ DeepSeek pre-loaded (took {load_time:.1f}s)")
+                    print(f"✓ GPT-OSS:20B pre-loaded (took {load_time:.1f}s)")
                     print(f"  Model will stay in memory (OLLAMA_KEEP_ALIVE=0)")
                     print(f"  Switching to qwen3-coder will take ~40s but both stay loaded once used")
                 else:
-                    print("⚠ Could not pre-load DeepSeek")
+                    print("⚠ Could not pre-load GPT-OSS")
     except Exception as e:
         print(f"⚠ Pre-load error: {e}")
     
     print("\nMemory status:")
-    print("  DeepSeek-R1 14B: Loaded (~10GB)")
-    print("  Qwen3-Coder 30B: On-demand (~18GB)")
+    print("  GPT-OSS 20B: Loaded (~12-14GB)")
     print("  Parakeet: Loaded (~3GB)")
-    print("  Total when both LLMs loaded: ~31GB/32GB")
+    print("  Total: ~15-17GB used, ~15-17GB free")
+    print("  Plenty of room for RAG, embeddings, or additional models")
     
     # Start Parakeet server
     print("\nStarting Parakeet STT server...")
