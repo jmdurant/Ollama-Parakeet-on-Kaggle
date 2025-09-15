@@ -294,28 +294,23 @@ async def wait_for_url(url, timeout=30):
     raise RuntimeError(f"Timeout waiting for {url}")
 
 def setup_ngrok_config():
-    """Create ngrok config file for multiple services"""
+    """Create ngrok config file for single domain with reverse proxy"""
     os.makedirs('/root/.config/ngrok', exist_ok=True)
     
-    # Configure ngrok for both services
+    # Configure ngrok for single tunnel to reverse proxy
     config_content = f"""authtoken: {NGROK_TOKEN}
 version: '2'
 tunnels:
-  ollama:
+  main:
     proto: http
-    addr: 11434
+    addr: 8080
     domain: {STATIC_DOMAIN}
-    host_header: rewrite
-  parakeet:
-    proto: http
-    addr: 8001
-    subdomain: parakeet
     host_header: rewrite
 """
     
     with open('/root/.config/ngrok/ngrok.yml', 'w') as f:
         f.write(config_content)
-    print("ngrok config created for both services")
+    print("ngrok config created for single domain routing")
 
 async def start_ngrok():
     """Start ngrok with config file"""
@@ -356,18 +351,97 @@ async def get_tunnel_urls(timeout=60):
                         urls['parakeet'] = t['public_url']
                 
                 if len(urls) == 2:  # Both tunnels found
+                    print(f"Found tunnels: Ollama={urls['ollama']}, Parakeet={urls['parakeet']}")
                     return urls
         except:
             pass
         await asyncio.sleep(2)
     
-    # Fallback to static domain
+    # Show what we found
+    print(f"Tunnel discovery timeout. Found: {urls}")
+    
+    # Fallback - use what we have
     if not urls.get('ollama'):
         urls['ollama'] = f"https://{STATIC_DOMAIN}"
-    if not urls.get('parakeet'):
-        urls['parakeet'] = f"https://parakeet-{STATIC_DOMAIN}"
     
     return urls
+
+# ============================================================================
+# REVERSE PROXY FOR SINGLE DOMAIN
+# ============================================================================
+
+from aiohttp import web
+
+async def create_reverse_proxy():
+    """Create a reverse proxy to route requests to appropriate services"""
+    app = web.Application()
+    
+    async def proxy_handler(request):
+        """Route requests based on path"""
+        path = request.path_qs
+        
+        # Determine target based on path
+        if path.startswith('/api/'):
+            # Route to Ollama
+            target_url = f"http://localhost:11434{path}"
+        elif path.startswith('/transcribe') or path.startswith('/healthz') or path.startswith('/ws'):
+            # Route to Parakeet
+            target_url = f"http://localhost:8001{path}"
+        else:
+            return web.Response(text="Service router running. Use /api/* for Ollama, /transcribe for Parakeet", status=200)
+        
+        # Forward the request
+        async with aiohttp.ClientSession() as session:
+            # Handle WebSocket upgrade
+            if request.headers.get('Upgrade') == 'websocket':
+                ws_server = web.WebSocketResponse()
+                await ws_server.prepare(request)
+                
+                async with session.ws_connect(target_url) as ws_client:
+                    async def forward_client_to_server():
+                        async for msg in ws_server:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                await ws_client.send_str(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.BINARY:
+                                await ws_client.send_bytes(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.ERROR:
+                                break
+                    
+                    async def forward_server_to_client():
+                        async for msg in ws_client:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                await ws_server.send_str(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.BINARY:
+                                await ws_server.send_bytes(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.ERROR:
+                                break
+                    
+                    await asyncio.gather(forward_client_to_server(), forward_server_to_client())
+                return ws_server
+            
+            # Handle regular HTTP requests
+            method = request.method
+            headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'content-length']}
+            data = await request.read() if request.body_exists else None
+            
+            async with session.request(method, target_url, headers=headers, data=data) as resp:
+                body = await resp.read()
+                return web.Response(body=body, status=resp.status, headers=resp.headers)
+    
+    # Add catch-all route
+    app.router.add_route('*', '/{path:.*}', proxy_handler)
+    
+    return app
+
+async def run_reverse_proxy():
+    """Run the reverse proxy server"""
+    app = await create_reverse_proxy()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    print("Reverse proxy running on port 8080")
+    return runner
 
 # ============================================================================
 # MAIN EXECUTION
@@ -416,6 +490,13 @@ async def main():
     # Give Parakeet time to start
     await asyncio.sleep(5)
     
+    # Start reverse proxy
+    print("Starting reverse proxy for single-domain routing...")
+    proxy_runner = await run_reverse_proxy()
+    
+    # Give proxy time to start
+    await asyncio.sleep(2)
+    
     # Start ngrok
     ngrok_process = await start_ngrok()
     
@@ -423,18 +504,34 @@ async def main():
     urls = await get_tunnel_urls()
     
     print("\n" + "="*60)
-    print("SERVICES READY!")
+    print("SERVICES READY - SINGLE DOMAIN ROUTING!")
     print("="*60)
-    print(f"Ollama LLM API: {urls['ollama']}/api/chat")
-    print(f"Parakeet STT API: {urls['parakeet']}/transcribe")
+    
+    base_url = f"https://{STATIC_DOMAIN}"
+    print(f"Base URL: {base_url}")
+    print()
+    print("Endpoints:")
+    print(f"  Ollama LLM:    {base_url}/api/chat")
+    print(f"  Parakeet STT:  {base_url}/transcribe")
+    print(f"  Parakeet WS:   wss://{STATIC_DOMAIN}/ws")
+    print(f"  Health Check:  {base_url}/healthz")
+    
     print("\nExample usage:")
-    print(f"  Ollama: curl -X POST {urls['ollama']}/api/chat -d '{{\"model\":\"deepseek-r1:14b\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}]}}'")
-    print(f"  Parakeet: curl -X POST {urls['parakeet']}/transcribe -F 'file=@audio.wav'")
+    print(f"  # Ollama chat")
+    print(f"  curl -X POST {base_url}/api/chat \\")
+    print(f"    -d '{{\"model\":\"deepseek-r1:14b\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}]}}'")
+    print()
+    print(f"  # Parakeet transcription")
+    print(f"  curl -X POST {base_url}/transcribe \\")
+    print(f"    -F 'file=@audio.wav' \\")
+    print(f"    -F 'include_timestamps=true'")
+    
     print("\nGPU Status:")
     print(f"  - Both T4 GPUs are being utilized")
     print(f"  - Ollama models: GPU auto-distribution")
     print(f"  - Parakeet model: Selected optimal GPU")
-    print("\nKeep this notebook running to maintain the connections")
+    print("\nAll services accessible through single domain: {STATIC_DOMAIN}")
+    print("Keep this notebook running to maintain the connection")
     print("="*60)
     
     # Keep all services running
