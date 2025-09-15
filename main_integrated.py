@@ -29,7 +29,7 @@ subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr] omegaconf 
 subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
 
 # RAG dependencies
-subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf2 sentence-transformers", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf sentence-transformers", shell=True)
 
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
@@ -70,7 +70,7 @@ import numpy as np
 # RAG imports
 import chromadb
 # ChromaDB no longer needs Settings import for basic usage
-import PyPDF2
+import pypdf
 from typing import List, Tuple
 import hashlib
 import json
@@ -317,7 +317,7 @@ class ClinicalRAGService:
         
         try:
             with open(pdf_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
+                pdf_reader = pypdf.PdfReader(file)
                 
                 for page_num, page in enumerate(pdf_reader.pages):
                     text = page.extract_text()
