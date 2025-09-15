@@ -90,9 +90,18 @@ PARAKEET_CONFIG = {
     "PROCESSING_TIMEOUT": 60
 }
 
-# Ngrok configuration
-STATIC_DOMAIN = "your-static-domain.ngrok-free.app"  # Replace with your ngrok static domain
-NGROK_TOKEN = 'your_ngrok_auth_token'  # Replace with your ngrok auth token
+# Ngrok configuration - check if already defined in notebook
+if 'STATIC_DOMAIN' not in globals():
+    STATIC_DOMAIN = "your-static-domain.ngrok-free.app"  # Replace with your ngrok static domain
+    print("Warning: Using default STATIC_DOMAIN. Define it in a previous cell to use your own.")
+else:
+    print(f"Using STATIC_DOMAIN: {STATIC_DOMAIN}")
+
+if 'NGROK_TOKEN' not in globals():
+    NGROK_TOKEN = 'your_ngrok_auth_token'  # Replace with your ngrok auth token
+    print("Warning: Using default NGROK_TOKEN. Define it in a previous cell to use your own.")
+else:
+    print("Using NGROK_TOKEN: [hidden for security]")
 
 # Logging setup
 logging.basicConfig(

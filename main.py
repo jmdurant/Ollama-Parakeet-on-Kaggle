@@ -46,9 +46,18 @@ os.environ['LD_LIBRARY_PATH'] = '/usr/local/cuda/lib64:/usr/lib64-nvidia:/usr/lo
 os.environ['CUDA_HOME'] = '/usr/local/cuda'
 os.environ['OLLAMA_GPU_LAYERS'] = '100'  # Enable GPU acceleration
 os.environ["OLLAMA_SCHED_SPREAD"] = "0,1"
-# Ngrok configuration
-STATIC_DOMAIN = "You need to set up a free static domain from ngrok"
-NGROK_TOKEN = 'This is your main auth token from ngrok'
+# Ngrok configuration - check if already defined in notebook
+if 'STATIC_DOMAIN' not in globals():
+    STATIC_DOMAIN = "You need to set up a free static domain from ngrok"
+    print("Warning: Using default STATIC_DOMAIN. Define it in a previous cell to use your own.")
+else:
+    print(f"Using STATIC_DOMAIN: {STATIC_DOMAIN}")
+
+if 'NGROK_TOKEN' not in globals():
+    NGROK_TOKEN = 'This is your main auth token from ngrok'
+    print("Warning: Using default NGROK_TOKEN. Define it in a previous cell to use your own.")
+else:
+    print("Using NGROK_TOKEN: [hidden for security]")
 
 async def run_process(cmd):
     """Run a command and stream its output"""
