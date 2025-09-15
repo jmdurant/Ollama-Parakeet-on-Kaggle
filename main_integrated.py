@@ -477,11 +477,18 @@ async def main():
     # Wait for Ollama API
     await wait_for_url('http://127.0.0.1:11434/v1/models')
     
-    # Pull Ollama models (original larger models - plenty of room with T4x2)
-    print("Pulling GPU-optimized models...")
-    print("Note: T4x2 provides 32GB total VRAM - sufficient for both services with larger models")
+    # Pull/update Ollama models
+    print("Checking and updating models (will skip if already up-to-date)...")
+    print("Note: T4x2 provides 32GB total VRAM - sufficient for both services")
+    
+    # Ollama pull is smart - only downloads if needed or if updates available
+    print("Checking deepseek-r1:14b...")
     await run_process(['ollama', 'pull', 'deepseek-r1:14b'])
+    
+    print("Checking qwen3-coder:30b...")
     await run_process(['ollama', 'pull', 'qwen3-coder:30b'])
+    
+    print("Models ready!")
     
     # Start Parakeet server
     print("Starting Parakeet STT server...")
@@ -530,7 +537,7 @@ async def main():
     print(f"  - Both T4 GPUs are being utilized")
     print(f"  - Ollama models: GPU auto-distribution")
     print(f"  - Parakeet model: Selected optimal GPU")
-    print("\nAll services accessible through single domain: {STATIC_DOMAIN}")
+    print(f"\nAll services accessible through single domain: {STATIC_DOMAIN}")
     print("Keep this notebook running to maintain the connection")
     print("="*60)
     

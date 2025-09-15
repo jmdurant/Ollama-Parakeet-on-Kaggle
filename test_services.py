@@ -14,12 +14,14 @@ import numpy as np
 from pathlib import Path
 
 # Configuration - update these with your actual endpoints
-OLLAMA_URL = "http://localhost:11434"  # Local testing
-PARAKEET_URL = "http://localhost:8001"  # Local testing
+# For local testing within Kaggle:
+# OLLAMA_URL = "http://localhost:11434"
+# PARAKEET_URL = "http://localhost:8001"
 
-# For ngrok URLs, uncomment and update:
-# OLLAMA_URL = "https://your-domain.ngrok-free.app"
-# PARAKEET_URL = "https://parakeet-your-domain.ngrok-free.app"
+# For single-domain routing (recommended):
+BASE_URL = "https://unponderous-nonmelodramatically-sheila.ngrok-free.dev"
+OLLAMA_URL = BASE_URL
+PARAKEET_URL = BASE_URL
 
 async def test_ollama():
     """Test Ollama LLM service"""

@@ -167,10 +167,17 @@ async def main():
     # Wait for Ollama API
     await wait_for_url('http://127.0.0.1:11434/v1/models')
     
-    # Pull models (GPU-optimized)
-    print("Pulling GPU-optimized models...")
+    # Pull/update models
+    print("Checking and updating models (will skip if already up-to-date)...")
+    
+    # Ollama pull is smart - only downloads if needed or if updates available
+    print("Checking deepseek-r1:14b...")
     await run_process(['ollama', 'pull', 'deepseek-r1:14b'])
+    
+    print("Checking qwen3-coder:30b...")
     await run_process(['ollama', 'pull', 'qwen3-coder:30b'])
+    
+    print("Models ready!")
     
     # Start ngrok with static domain
     ngrok_process = await start_ngrok()
