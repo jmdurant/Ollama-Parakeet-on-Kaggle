@@ -19,8 +19,8 @@ print("Installing Python dependencies for both services...")
 # Ollama dependencies
 !pip install -q pyngrok==6.1.0 aiohttp nest_asyncio requests
 
-# Parakeet dependencies
-!pip install -q torch==2.3.0 torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Parakeet dependencies - using latest versions for compatibility
+!pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 !pip install -q nemo_toolkit[asr] omegaconf ffmpeg-python python-dotenv
 !pip install -q fastapi uvicorn python-multipart
 
