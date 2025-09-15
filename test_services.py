@@ -36,7 +36,8 @@ async def test_ollama():
                 if resp.status == 200:
                     data = await resp.json()
                     print("✓ Ollama service is running")
-                    print(f"  Available models: {[m['name'] for m in data.get('models', [])]}")
+                    models = [m['name'] for m in data.get('models', [])]
+                    print(f"  Available models: {models}")
                 else:
                     print(f"✗ Ollama service returned status {resp.status}")
                     return False
@@ -61,10 +62,69 @@ async def test_ollama():
                     response_text = result.get('message', {}).get('content', '')
                     print(f"✓ Chat completion successful")
                     print(f"  Response: {response_text[:100]}...")
-                    return True
                 else:
                     print(f"✗ Chat completion failed with status {resp.status}")
                     return False
+            
+            # Test 3: Performance testing
+            print("\nTesting performance...")
+            perf_results = {}
+            
+            # Test each available model
+            for model in models[:2]:  # Test up to 2 models
+                print(f"\nTesting {model} performance...")
+                perf_data = {
+                    "model": model,
+                    "messages": [
+                        {"role": "user", "content": "Count from 1 to 5"}
+                    ],
+                    "stream": False
+                }
+                
+                try:
+                    async with session.post(
+                        f"{OLLAMA_URL}/api/chat",
+                        json=perf_data,
+                        timeout=aiohttp.ClientTimeout(total=60)
+                    ) as resp:
+                        if resp.status == 200:
+                            result = await resp.json()
+                            
+                            # Calculate performance metrics
+                            if 'eval_count' in result and 'eval_duration' in result:
+                                tokens = result['eval_count']
+                                eval_ns = result['eval_duration']
+                                eval_s = eval_ns / 1_000_000_000
+                                tps = tokens / eval_s if eval_s > 0 else 0
+                                
+                                prompt_tokens = result.get('prompt_eval_count', 0)
+                                prompt_ns = result.get('prompt_eval_duration', 0)
+                                prompt_s = prompt_ns / 1_000_000_000
+                                prompt_tps = prompt_tokens / prompt_s if prompt_s > 0 else 0
+                                
+                                print(f"  ✓ Performance test for {model}:")
+                                print(f"    Generation: {tps:.1f} tokens/sec ({tokens} tokens in {eval_s:.2f}s)")
+                                print(f"    Prompt processing: {prompt_tps:.1f} tokens/sec")
+                                
+                                perf_results[model] = {
+                                    'generation_tps': tps,
+                                    'prompt_tps': prompt_tps
+                                }
+                            else:
+                                print(f"  ⚠ Performance metrics not available for {model}")
+                        else:
+                            print(f"  ✗ Performance test failed for {model}")
+                except asyncio.TimeoutError:
+                    print(f"  ⚠ Performance test timed out for {model}")
+                except Exception as e:
+                    print(f"  ✗ Performance test error for {model}: {e}")
+            
+            if perf_results:
+                print("\n📊 Performance Summary:")
+                for model, metrics in perf_results.items():
+                    print(f"  {model}: {metrics['generation_tps']:.1f} tokens/sec")
+            
+            return True
                     
     except aiohttp.ClientConnectionError:
         print("✗ Could not connect to Ollama service")

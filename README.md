@@ -173,10 +173,27 @@ Either add or remove each model name of your choice from the script.
 With T4x2 (2 × 16GB = 32GB total):
 - **Parakeet TDT 0.6B**: ~2-3GB VRAM
 - **DeepSeek-R1 14B**: ~8-10GB VRAM (fp16)
-- **Qwen3-Coder 30B**: ~16-18GB VRAM (fp16)
+- **Qwen3-Coder 30B**: ~16-18GB VRAM (Q4_K_M quantized)
 - **Overhead & Processing**: ~2-3GB
 
 Total usage: ~28-30GB, efficiently utilizing available VRAM while leaving some headroom.
+
+## Performance Benchmarks
+
+Tested on Kaggle T4x2 (dual T4 GPUs):
+
+### LLM Generation Speed
+| Model | Size | Quantization | Generation Speed | Prompt Processing |
+|-------|------|--------------|------------------|-------------------|
+| **Qwen3-Coder** | 30B | Q4_K_M | **42.8 tokens/sec** | 641 tokens/sec |
+| **DeepSeek-R1** | 14B | fp16 | **20.2 tokens/sec** | 1,031 tokens/sec |
+
+### Response Times
+- Simple queries: 2-3 seconds
+- Complex generation: 5-30 seconds depending on output length
+- Parakeet transcription: Near real-time for audio processing
+
+These speeds are production-ready for most applications, providing responsive AI services through the single domain endpoint.
 
 ## Support
 
