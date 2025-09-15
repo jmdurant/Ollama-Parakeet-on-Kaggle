@@ -29,7 +29,7 @@ subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr] omegaconf 
 subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
 
 # RAG dependencies
-subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf sentence-transformers", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
 
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
@@ -71,6 +71,7 @@ import numpy as np
 import chromadb
 # ChromaDB no longer needs Settings import for basic usage
 import pypdf
+import pdfplumber
 from typing import List, Tuple
 import hashlib
 import json
@@ -312,18 +313,37 @@ class ClinicalRAGService:
         return embeddings
     
     def chunk_pdf(self, pdf_path: str, chunk_size: int = 1000, overlap: int = 200) -> List[Tuple[str, dict]]:
-        """Chunk PDF intelligently for clinical documents"""
+        """Chunk PDF intelligently for clinical documents with table support"""
         chunks = []
         
         try:
-            with open(pdf_path, 'rb') as file:
-                pdf_reader = pypdf.PdfReader(file)
-                
-                for page_num, page in enumerate(pdf_reader.pages):
-                    text = page.extract_text()
+            # Use both pypdf and pdfplumber for comprehensive extraction
+            with pdfplumber.open(pdf_path) as plumber_pdf:
+                for page_num, plumber_page in enumerate(plumber_pdf.pages):
+                    # Extract tables first
+                    tables = plumber_page.extract_tables()
                     
+                    # If tables found, add them as structured chunks
+                    if tables:
+                        for i, table in enumerate(tables):
+                            # Convert table to formatted text
+                            table_text = self._format_table(table)
+                            if table_text:
+                                table_metadata = {
+                                    'page': page_num + 1,
+                                    'source': pdf_path.split('/')[-1],
+                                    'type': 'table',
+                                    'table_index': i,
+                                    'chunk_id': hashlib.md5(table_text.encode()).hexdigest()[:8]
+                                }
+                                chunks.append((f"[TABLE]\n{table_text}\n[/TABLE]", table_metadata))
+                    
+                    # Extract text with layout preservation
+                    text = plumber_page.extract_text()
+                    if not text:
+                        continue
+                        
                     # Smart chunking for clinical content
-                    # Try to split by diagnostic codes or sections
                     lines = text.split('\n')
                     current_chunk = []
                     current_size = 0
@@ -343,6 +363,7 @@ class ClinicalRAGService:
                             metadata = {
                                 'page': page_num + 1,
                                 'source': pdf_path.split('/')[-1],
+                                'type': 'text',
                                 'chunk_id': hashlib.md5(chunk_text.encode()).hexdigest()[:8]
                             }
                             chunks.append((chunk_text, metadata))
@@ -358,6 +379,7 @@ class ClinicalRAGService:
                                 metadata = {
                                     'page': page_num + 1,
                                     'source': pdf_path.split('/')[-1],
+                                    'type': 'text',
                                     'chunk_id': hashlib.md5(chunk_text.encode()).hexdigest()[:8]
                                 }
                                 chunks.append((chunk_text, metadata))
@@ -376,6 +398,7 @@ class ClinicalRAGService:
                         metadata = {
                             'page': page_num + 1,
                             'source': pdf_path.split('/')[-1],
+                            'type': 'text',
                             'chunk_id': hashlib.md5(chunk_text.encode()).hexdigest()[:8]
                         }
                         chunks.append((chunk_text, metadata))
@@ -384,6 +407,20 @@ class ClinicalRAGService:
             logger.error(f"Error chunking PDF: {e}")
             
         return chunks
+    
+    def _format_table(self, table):
+        """Format table data into readable text"""
+        if not table:
+            return ""
+        
+        formatted_lines = []
+        for row in table:
+            # Filter out None values and join with | separator
+            cleaned_row = [str(cell) if cell is not None else "" for cell in row]
+            if any(cleaned_row):  # Only add non-empty rows
+                formatted_lines.append(" | ".join(cleaned_row))
+        
+        return "\n".join(formatted_lines)
     
     async def ingest_document(self, pdf_path: str) -> int:
         """Ingest a PDF document into the vector store"""
