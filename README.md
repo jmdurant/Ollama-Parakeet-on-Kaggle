@@ -7,6 +7,7 @@ This project sets up both a GPU-accelerated Ollama LLM server and NVIDIA Parakee
 ### Integrated Services
 - **Ollama LLM Server**: Large language model inference with multiple models
 - **Parakeet TDT STT**: NVIDIA's high-accuracy speech-to-text transcription service
+- **RAG System**: Retrieval-Augmented Generation for document-based Q&A
 
 ### Technical Features
 - **Dual T4 GPU Support**: Optimized for Kaggle's T4x2 configuration with auto-distribution
@@ -16,6 +17,8 @@ This project sets up both a GPU-accelerated Ollama LLM server and NVIDIA Parakee
 - **Non-interactive Setup**: Fully automated installation process
 - **Real-time Monitoring**: Live output streaming from all services
 - **Memory Management**: Intelligent GPU memory allocation between services
+- **Vector Database**: ChromaDB for efficient document retrieval
+- **Smart Chunking**: Specialized PDF processing for clinical documents (DSM-5, ICD codes)
 
 ## Prerequisites
 
@@ -69,6 +72,7 @@ Configure this to suit your needs and demands
 
 **Integrated Version (main_integrated.py)**:
 - `gpt-oss:20b` (GPT-4 Turbo comparable, Mixture-of-Experts)
+- `nomic-embed-text` (768-dim embeddings for RAG)
 - `nvidia/parakeet-tdt-0.6b-v2` (auto-downloaded STT)
 - Additional models can be pulled on-demand
 
@@ -81,10 +85,13 @@ https://[your-static-domain].ngrok-free.app/api/chat
 ```
 
 ### Integrated Version
-Two endpoints available:
+All services available through single domain:
 ```
 Ollama LLM: https://[your-static-domain].ngrok-free.app/api/chat
-Parakeet STT: https://parakeet-[your-static-domain].ngrok-free.app/transcribe
+Parakeet STT: https://[your-static-domain].ngrok-free.app/transcribe
+RAG Query: https://[your-static-domain].ngrok-free.app/api/rag/query
+RAG Chat: https://[your-static-domain].ngrok-free.app/api/rag/chat
+Document Ingest: https://[your-static-domain].ngrok-free.app/api/rag/ingest
 ```
 
 The servers will remain active as long as the notebook is running.
@@ -92,15 +99,21 @@ The servers will remain active as long as the notebook is running.
 ## Testing the Services
 
 ### Automated Testing
-Two test scripts are provided to verify your services are working:
+Three test scripts are provided to verify your services are working:
 
-1. **test_services.py** - Automated test suite for both services
+1. **test_services.py** - Automated test suite for Ollama and Parakeet
 ```python
 # Update the URLs in the script with your ngrok endpoints
 python test_services.py
 ```
 
-2. **generate_test_audio.py** - Creates test audio files for Parakeet
+2. **test_rag.py** - Test suite for RAG functionality
+```python
+# Tests document ingestion, search, and RAG-enhanced chat
+python test_rag.py
+```
+
+3. **generate_test_audio.py** - Creates test audio files for Parakeet
 ```python
 python generate_test_audio.py
 # This creates test WAV files you can use to test transcription
@@ -123,11 +136,55 @@ curl -X POST https://your-domain.ngrok-free.app/api/chat \
 ### Parakeet Speech-to-Text
 ```bash
 # Transcribe audio file
-curl -X POST https://parakeet-your-domain.ngrok-free.app/transcribe \
+curl -X POST https://your-domain.ngrok-free.app/transcribe \
   -F "file=@audio.wav" \
   -F "include_timestamps=true"
 
 # Response includes transcription and optional timestamps
+```
+
+### RAG (Retrieval-Augmented Generation)
+
+#### Ingest Documents
+```bash
+# Ingest a PDF document
+curl -X POST https://your-domain.ngrok-free.app/api/rag/ingest \
+  -F "file=@dsm5.pdf"
+
+# Or ingest text content directly
+curl -X POST https://your-domain.ngrok-free.app/api/rag/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "F90.0 ADHD diagnostic criteria...",
+    "metadata": {"source": "DSM-5", "type": "diagnostic"}
+  }'
+```
+
+#### RAG-Enhanced Chat
+```bash
+# Ask questions with document context
+curl -X POST https://your-domain.ngrok-free.app/api/rag/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What are the diagnostic criteria for ADHD?",
+    "model": "gpt-oss:20b"
+  }'
+```
+
+#### Search Documents
+```bash
+# Search for relevant chunks
+curl -X POST https://your-domain.ngrok-free.app/api/rag/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "attention deficit symptoms",
+    "k": 5
+  }'
+```
+
+#### Check RAG Status
+```bash
+curl https://your-domain.ngrok-free.app/api/rag/status
 ```
 
 ### Model Listing
@@ -171,14 +228,16 @@ Either add or remove each model name of your choice from the script.
 ## GPU Memory Allocation
 
 With T4x2 (2 × 16GB = 32GB total):
-- **GPT-OSS 20B**: ~12-14GB VRAM
-- **Parakeet TDT 0.6B**: ~2-3GB VRAM
-- **Overhead & Processing**: ~2-3GB
+- **GPT-OSS 20B**: ~12-14GB VRAM (primary LLM)
+- **Nomic-Embed-Text**: ~1-2GB VRAM (embeddings for RAG)
+- **Parakeet TDT 0.6B**: ~2-3GB VRAM (speech-to-text)
+- **ChromaDB & Processing**: ~1-2GB VRAM
+- **System Overhead**: ~2-3GB
 
-**Current usage: ~15-17GB, leaving ~15-17GB free** for:
-- Additional models on-demand
-- RAG vector databases
-- Embeddings models
+**Current usage: ~18-24GB, leaving ~8-14GB free** for:
+- Additional models on-demand (e.g., qwen3-coder:30b)
+- Larger document collections
+- Multiple concurrent requests
 - Other services
 
 ## Performance Benchmarks

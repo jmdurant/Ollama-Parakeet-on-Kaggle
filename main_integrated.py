@@ -28,6 +28,9 @@ subprocess.run(f"{sys.executable} -m pip install -q torch torchvision torchaudio
 subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr] omegaconf ffmpeg-python python-dotenv", shell=True)
 subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
 
+# RAG dependencies
+subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf2 sentence-transformers", shell=True)
+
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
 subprocess.run("nvidia-smi", shell=True)
@@ -63,6 +66,14 @@ import nemo.collections.asr as nemo_asr
 from omegaconf import open_dict
 import torchaudio
 import numpy as np
+
+# RAG imports
+import chromadb
+from chromadb.config import Settings
+import PyPDF2
+from typing import List, Tuple
+import hashlib
+import json
 
 # Apply nest_asyncio for Jupyter compatibility
 nest_asyncio.apply()
@@ -216,6 +227,271 @@ class ParakeetService:
 
 # Global Parakeet service instance
 parakeet_service = ParakeetService()
+
+# ============================================================================
+# RAG SERVICE FOR DOCUMENT RETRIEVAL
+# ============================================================================
+
+class ClinicalRAGService:
+    """RAG service for clinical document retrieval and enhanced Q&A"""
+    
+    def __init__(self):
+        self.collection = None
+        self.chroma_client = None
+        self.embeddings_model = None
+        self.documents_indexed = 0
+        
+    async def initialize(self):
+        """Initialize ChromaDB and embeddings"""
+        logger.info("Initializing RAG service...")
+        
+        # Initialize ChromaDB with persistent storage
+        self.chroma_client = chromadb.Client(Settings(
+            chroma_db_impl="duckdb+parquet",
+            persist_directory="/kaggle/working/chromadb"
+        ))
+        
+        # Create or get collection
+        try:
+            self.collection = self.chroma_client.create_collection(
+                name="clinical_docs",
+                metadata={"description": "Clinical reference documents"}
+            )
+            logger.info("Created new ChromaDB collection")
+        except:
+            self.collection = self.chroma_client.get_collection("clinical_docs")
+            logger.info(f"Loaded existing collection with {self.collection.count()} documents")
+            self.documents_indexed = self.collection.count()
+        
+        # Pull embeddings model if not available
+        logger.info("Checking embeddings model...")
+        await self.ensure_embeddings_model()
+        
+    async def ensure_embeddings_model(self):
+        """Ensure embeddings model is available"""
+        try:
+            # Check if nomic-embed-text is available
+            proc = await asyncio.create_subprocess_exec(
+                'ollama', 'list',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+            
+            if 'nomic-embed-text' not in stdout.decode():
+                logger.info("Pulling nomic-embed-text embeddings model...")
+                proc = await asyncio.create_subprocess_exec(
+                    'ollama', 'pull', 'nomic-embed-text:latest',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await proc.communicate()
+                logger.info("Embeddings model ready")
+            else:
+                logger.info("Embeddings model already available")
+                
+        except Exception as e:
+            logger.error(f"Error setting up embeddings: {e}")
+    
+    async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """Get embeddings using Ollama's nomic-embed-text model"""
+        embeddings = []
+        
+        for text in texts:
+            # Use Ollama's embeddings endpoint
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    'http://localhost:11434/api/embeddings',
+                    json={"model": "nomic-embed-text", "prompt": text}
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        embeddings.append(result['embedding'])
+                    else:
+                        logger.error(f"Failed to get embedding: {resp.status}")
+                        embeddings.append([0.0] * 768)  # Default embedding size
+        
+        return embeddings
+    
+    def chunk_pdf(self, pdf_path: str, chunk_size: int = 1000, overlap: int = 200) -> List[Tuple[str, dict]]:
+        """Chunk PDF intelligently for clinical documents"""
+        chunks = []
+        
+        try:
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                
+                for page_num, page in enumerate(pdf_reader.pages):
+                    text = page.extract_text()
+                    
+                    # Smart chunking for clinical content
+                    # Try to split by diagnostic codes or sections
+                    lines = text.split('\n')
+                    current_chunk = []
+                    current_size = 0
+                    
+                    for line in lines:
+                        # Check for diagnostic codes (e.g., F90.0, 314.01)
+                        is_new_section = any([
+                            'F' in line and '.' in line and line[:3].replace('F', '').isdigit(),
+                            line.strip().startswith(('A.', 'B.', 'C.', 'D.', 'E.')),
+                            'Diagnostic Criteria' in line,
+                            'Diagnostic Features' in line
+                        ])
+                        
+                        if is_new_section and current_chunk:
+                            # Save current chunk
+                            chunk_text = '\n'.join(current_chunk)
+                            metadata = {
+                                'page': page_num + 1,
+                                'source': pdf_path.split('/')[-1],
+                                'chunk_id': hashlib.md5(chunk_text.encode()).hexdigest()[:8]
+                            }
+                            chunks.append((chunk_text, metadata))
+                            current_chunk = [line]
+                            current_size = len(line)
+                        else:
+                            current_chunk.append(line)
+                            current_size += len(line)
+                            
+                            # Force new chunk if too large
+                            if current_size > chunk_size:
+                                chunk_text = '\n'.join(current_chunk)
+                                metadata = {
+                                    'page': page_num + 1,
+                                    'source': pdf_path.split('/')[-1],
+                                    'chunk_id': hashlib.md5(chunk_text.encode()).hexdigest()[:8]
+                                }
+                                chunks.append((chunk_text, metadata))
+                                
+                                # Keep overlap
+                                if overlap > 0 and len(current_chunk) > 5:
+                                    current_chunk = current_chunk[-5:]
+                                    current_size = sum(len(line) for line in current_chunk)
+                                else:
+                                    current_chunk = []
+                                    current_size = 0
+                    
+                    # Don't forget last chunk of page
+                    if current_chunk:
+                        chunk_text = '\n'.join(current_chunk)
+                        metadata = {
+                            'page': page_num + 1,
+                            'source': pdf_path.split('/')[-1],
+                            'chunk_id': hashlib.md5(chunk_text.encode()).hexdigest()[:8]
+                        }
+                        chunks.append((chunk_text, metadata))
+                        
+        except Exception as e:
+            logger.error(f"Error chunking PDF: {e}")
+            
+        return chunks
+    
+    async def ingest_document(self, pdf_path: str) -> int:
+        """Ingest a PDF document into the vector store"""
+        logger.info(f"Ingesting document: {pdf_path}")
+        
+        # Chunk the PDF
+        chunks = self.chunk_pdf(pdf_path)
+        
+        if not chunks:
+            logger.error("No chunks extracted from PDF")
+            return 0
+        
+        # Get embeddings for all chunks
+        texts = [chunk[0] for chunk in chunks]
+        embeddings = await self.get_embeddings(texts)
+        
+        # Add to ChromaDB
+        ids = [f"{chunk[1]['source']}_{chunk[1]['chunk_id']}" for chunk in chunks]
+        metadatas = [chunk[1] for chunk in chunks]
+        
+        self.collection.add(
+            embeddings=embeddings,
+            documents=texts,
+            metadatas=metadatas,
+            ids=ids
+        )
+        
+        self.documents_indexed += len(chunks)
+        logger.info(f"Ingested {len(chunks)} chunks from {pdf_path}")
+        
+        return len(chunks)
+    
+    async def query(self, question: str, n_results: int = 5) -> Tuple[str, List[dict]]:
+        """Query the RAG system for relevant context"""
+        if not self.collection or self.documents_indexed == 0:
+            return "", []
+        
+        # Get embedding for the question
+        question_embedding = await self.get_embeddings([question])
+        
+        # Query ChromaDB
+        results = self.collection.query(
+            query_embeddings=question_embedding,
+            n_results=n_results
+        )
+        
+        # Format context
+        context_parts = []
+        sources = []
+        
+        if results['documents'] and results['documents'][0]:
+            for i, doc in enumerate(results['documents'][0]):
+                metadata = results['metadatas'][0][i] if results['metadatas'] else {}
+                context_parts.append(f"[Source: {metadata.get('source', 'Unknown')}, Page: {metadata.get('page', 'N/A')}]\n{doc}")
+                sources.append(metadata)
+        
+        context = "\n\n---\n\n".join(context_parts)
+        
+        return context, sources
+    
+    async def rag_chat(self, question: str, model: str = "gpt-oss:20b") -> dict:
+        """Perform RAG-enhanced chat"""
+        # Get relevant context
+        context, sources = await self.query(question)
+        
+        # Build enhanced prompt
+        if context:
+            enhanced_prompt = f"""Based on the following reference material, please answer the question.
+
+Reference Material:
+{context}
+
+Question: {question}
+
+Please provide a comprehensive answer based on the reference material. If the reference doesn't contain enough information, indicate what's missing."""
+        else:
+            enhanced_prompt = question
+        
+        # Send to Ollama
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                'http://localhost:11434/api/chat',
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": enhanced_prompt}],
+                    "stream": False
+                }
+            ) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    response = result.get('message', {}).get('content', '')
+                    
+                    return {
+                        "response": response,
+                        "sources": sources,
+                        "context_used": bool(context)
+                    }
+                else:
+                    return {
+                        "response": "Error generating response",
+                        "sources": [],
+                        "context_used": False
+                    }
+
+# Global RAG service instance
+rag_service = ClinicalRAGService()
 
 # ============================================================================
 # FASTAPI APP FOR PARAKEET
@@ -382,14 +658,81 @@ async def create_reverse_proxy():
         path = request.path_qs
         
         # Determine target based on path
-        if path.startswith('/api/'):
+        if path.startswith('/api/chat') or path.startswith('/api/tags') or path.startswith('/api/embeddings'):
             # Route to Ollama
             target_url = f"http://localhost:11434{path}"
+        elif path.startswith('/api/rag'):
+            # Handle RAG endpoints directly
+            try:
+                if path == '/api/rag/query':
+                    # RAG-enhanced query
+                    data = await request.json()
+                    result = await rag_service.rag_chat(
+                        question=data.get('question', ''),
+                        model=data.get('model', 'gpt-oss:20b')
+                    )
+                    return web.json_response(result)
+                    
+                elif path == '/api/rag/ingest':
+                    # Document ingestion
+                    data = await request.json()
+                    pdf_path = data.get('pdf_path', '')
+                    if os.path.exists(pdf_path):
+                        chunks = await rag_service.ingest_document(pdf_path)
+                        return web.json_response({
+                            "status": "success",
+                            "chunks_indexed": chunks,
+                            "total_documents": rag_service.documents_indexed
+                        })
+                    else:
+                        return web.json_response({
+                            "status": "error",
+                            "message": f"File not found: {pdf_path}"
+                        }, status=404)
+                        
+                elif path == '/api/rag/status':
+                    # RAG system status
+                    return web.json_response({
+                        "status": "ready" if rag_service.collection else "not_initialized",
+                        "documents_indexed": rag_service.documents_indexed,
+                        "collection_name": "clinical_docs"
+                    })
+                    
+                elif path == '/api/rag/search':
+                    # Direct search without LLM
+                    data = await request.json()
+                    context, sources = await rag_service.query(
+                        question=data.get('question', ''),
+                        n_results=data.get('n_results', 5)
+                    )
+                    return web.json_response({
+                        "context": context,
+                        "sources": sources
+                    })
+                else:
+                    return web.json_response({"error": "Unknown RAG endpoint"}, status=404)
+                    
+            except Exception as e:
+                logger.error(f"RAG endpoint error: {e}")
+                return web.json_response({"error": str(e)}, status=500)
+                
         elif path.startswith('/transcribe') or path.startswith('/healthz') or path.startswith('/ws'):
             # Route to Parakeet
             target_url = f"http://localhost:8001{path}"
         else:
-            return web.Response(text="Service router running. Use /api/* for Ollama, /transcribe for Parakeet", status=200)
+            info_text = """Service router running.
+            
+Endpoints:
+- /api/chat - Ollama LLM chat
+- /api/tags - List available models
+- /api/rag/query - RAG-enhanced chat
+- /api/rag/search - Search documents
+- /api/rag/ingest - Add document to RAG
+- /api/rag/status - RAG system status
+- /transcribe - Parakeet STT
+- /healthz - Health check
+- /ws - Parakeet WebSocket"""
+            return web.Response(text=info_text, status=200)
         
         # Forward the request
         async with aiohttp.ClientSession() as session:
@@ -486,6 +829,10 @@ async def main():
     print("Checking gpt-oss:20b...")
     await run_process(['ollama', 'pull', 'gpt-oss:20b'])
     
+    # Pull embeddings model for RAG
+    print("Checking nomic-embed-text for RAG embeddings...")
+    await run_process(['ollama', 'pull', 'nomic-embed-text'])
+    
     # Skip other models for faster startup
     # Uncomment if needed:
     # await run_process(['ollama', 'pull', 'qwen3-coder:30b'])
@@ -528,8 +875,55 @@ async def main():
     # Give Parakeet time to start
     await asyncio.sleep(5)
     
+    # Initialize RAG service
+    print("\n" + "="*60)
+    print("Initializing RAG Service...")
+    print("="*60)
+    
+    global rag_service
+    rag_service = ClinicalRAGService()
+    await rag_service.initialize()
+    
+    # Check for documents to ingest on startup
+    kaggle_input_dir = Path("/kaggle/input")
+    if kaggle_input_dir.exists():
+        print(f"\nChecking for documents in {kaggle_input_dir}...")
+        pdf_files = list(kaggle_input_dir.glob("**/*.pdf"))
+        
+        if pdf_files:
+            print(f"Found {len(pdf_files)} PDF files to ingest:")
+            for pdf_file in pdf_files[:5]:  # Show first 5 files
+                print(f"  - {pdf_file.name}")
+            if len(pdf_files) > 5:
+                print(f"  ... and {len(pdf_files) - 5} more")
+            
+            print("\nIngesting documents into RAG system...")
+            for pdf_file in pdf_files:
+                try:
+                    print(f"  Ingesting: {pdf_file.name}")
+                    result = await rag_service.ingest_pdf(str(pdf_file))
+                    if result['success']:
+                        print(f"    ✓ Added {result['chunks_added']} chunks")
+                    else:
+                        print(f"    ✗ Failed: {result.get('error', 'Unknown error')}")
+                except Exception as e:
+                    print(f"    ✗ Error ingesting {pdf_file.name}: {e}")
+            
+            print(f"\n✓ RAG system ready with {len(pdf_files)} documents")
+        else:
+            print("  No PDF documents found to ingest")
+            print("  Upload PDFs to /kaggle/input/ or use the /api/rag/ingest endpoint")
+    else:
+        print(f"\n{kaggle_input_dir} not found (normal if not in Kaggle)")
+        print("  Documents can be ingested via the /api/rag/ingest endpoint")
+    
+    print(f"\nRAG Service initialized successfully!")
+    print(f"  Collection: {rag_service.collection_name}")
+    print(f"  Embeddings: nomic-embed-text")
+    print(f"  Vector DB: ChromaDB (in-memory)")
+    
     # Start reverse proxy
-    print("Starting reverse proxy for single-domain routing...")
+    print("\nStarting reverse proxy for single-domain routing...")
     proxy_runner = await run_reverse_proxy()
     
     # Give proxy time to start
@@ -548,16 +942,27 @@ async def main():
     base_url = f"https://{STATIC_DOMAIN}"
     print(f"Base URL: {base_url}")
     print()
-    print("Endpoints:")
-    print(f"  Ollama LLM:    {base_url}/api/chat")
-    print(f"  Parakeet STT:  {base_url}/transcribe")
-    print(f"  Parakeet WS:   wss://{STATIC_DOMAIN}/ws")
-    print(f"  Health Check:  {base_url}/healthz")
+    print("Core Endpoints:")
+    print(f"  Ollama LLM:      {base_url}/api/chat")
+    print(f"  Parakeet STT:    {base_url}/transcribe")
+    print(f"  Parakeet WS:     wss://{STATIC_DOMAIN}/ws")
+    print(f"  Health Check:    {base_url}/healthz")
+    
+    print("\nRAG Endpoints:")
+    print(f"  RAG Query:       {base_url}/api/rag/query")
+    print(f"  RAG Chat:        {base_url}/api/rag/chat")
+    print(f"  Document Ingest: {base_url}/api/rag/ingest")
+    print(f"  RAG Search:      {base_url}/api/rag/search")
+    print(f"  RAG Status:      {base_url}/api/rag/status")
     
     print("\nExample usage:")
     print(f"  # Ollama chat")
     print(f"  curl -X POST {base_url}/api/chat \\")
-    print(f"    -d '{{\"model\":\"deepseek-r1:14b\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}]}}'")
+    print(f"    -d '{{\"model\":\"gpt-oss:20b\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}]}}'")
+    print()
+    print(f"  # RAG-enhanced chat (clinical documents)")
+    print(f"  curl -X POST {base_url}/api/rag/chat \\")
+    print(f"    -d '{{\"question\":\"What are the diagnostic criteria for ADHD?\",\"model\":\"gpt-oss:20b\"}}'")
     print()
     print(f"  # Parakeet transcription")
     print(f"  curl -X POST {base_url}/transcribe \\")
