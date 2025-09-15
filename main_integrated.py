@@ -2,46 +2,47 @@
 # This script sets up both Ollama LLM server and Parakeet STT service
 
 # ============================================================================
-# SETUP AND INSTALLATION
+# SETUP AND INSTALLATION (Using subprocess to avoid cell splitting)
 # ============================================================================
 
+import subprocess
+import sys
+import os
+
 print("Setting up non-interactive environment...")
-!echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections
-!echo "keyboard-configuration keyboard-configuration/layoutcode string us" | sudo debconf-set-selections
-!echo "keyboard-configuration keyboard-configuration/variantcode string" | sudo debconf-set-selections
+subprocess.run("echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections", shell=True)
+subprocess.run("echo 'keyboard-configuration keyboard-configuration/layoutcode string us' | sudo debconf-set-selections", shell=True)
+subprocess.run("echo 'keyboard-configuration keyboard-configuration/variantcode string' | sudo debconf-set-selections", shell=True)
 
 print("Installing Ollama and system dependencies...")
-!curl -fsSL https://ollama.ai/install.sh | sudo sh
-!sudo apt-get update -y
-!sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-drivers ocl-icd-opencl-dev nvidia-cuda-toolkit ffmpeg
+subprocess.run("curl -fsSL https://ollama.ai/install.sh | sudo sh", shell=True)
+subprocess.run("sudo apt-get update -y", shell=True)
+subprocess.run("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-drivers ocl-icd-opencl-dev nvidia-cuda-toolkit ffmpeg", shell=True)
 
 print("Installing Python dependencies for both services...")
 # Ollama dependencies
-!pip install -q pyngrok==6.1.0 aiohttp nest_asyncio requests
+subprocess.run(f"{sys.executable} -m pip install -q pyngrok==6.1.0 aiohttp nest_asyncio requests", shell=True)
 
 # Parakeet dependencies - using latest versions for compatibility
-!pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-!pip install -q nemo_toolkit[asr] omegaconf ffmpeg-python python-dotenv
-!pip install -q fastapi uvicorn python-multipart
+subprocess.run(f"{sys.executable} -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr] omegaconf ffmpeg-python python-dotenv", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
 
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
-!nvidia-smi
-!ls /usr/local/cuda
+subprocess.run("nvidia-smi", shell=True)
+subprocess.run("ls /usr/local/cuda", shell=True)
 
 # ============================================================================
 # IMPORTS AND CONFIGURATION
 # ============================================================================
 
 print("Starting integrated services...")
-import os
-import sys
 import time
 import asyncio
 import nest_asyncio
 import aiohttp
 import requests
-import subprocess
 import logging
 import gc
 import torch

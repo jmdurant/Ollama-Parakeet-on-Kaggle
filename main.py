@@ -1,28 +1,41 @@
-# Install all required dependencies with non-interactive setup
+# Ollama Server on Kaggle with GPU Acceleration
+# This script sets up an Ollama server with ngrok tunnel
+
+# ============================================================================
+# SETUP AND INSTALLATION (Using subprocess to avoid cell splitting)
+# ============================================================================
+
+import subprocess
+import sys
+import os
+
 print("Setting up non-interactive environment...")
-!echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections
-!echo "keyboard-configuration keyboard-configuration/layoutcode string us" | sudo debconf-set-selections
-!echo "keyboard-configuration keyboard-configuration/variantcode string" | sudo debconf-set-selections
+subprocess.run("echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections", shell=True)
+subprocess.run("echo 'keyboard-configuration keyboard-configuration/layoutcode string us' | sudo debconf-set-selections", shell=True)
+subprocess.run("echo 'keyboard-configuration keyboard-configuration/variantcode string' | sudo debconf-set-selections", shell=True)
+
+print("Installing Ollama...")
+subprocess.run("curl -fsSL https://ollama.ai/install.sh | sudo sh", shell=True)
 
 print("Installing system dependencies...")
-!curl -fsSL https://ollama.ai/install.sh | sudo sh
-!sudo apt-get update -y
-!sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-drivers ocl-icd-opencl-dev nvidia-cuda-toolkit
-!pip install pyngrok==6.1.0 aiohttp nest_asyncio requests
+subprocess.run("sudo apt-get update -y", shell=True)
+subprocess.run("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-drivers ocl-icd-opencl-dev nvidia-cuda-toolkit", shell=True)
+
+print("Installing Python packages...")
+subprocess.run(f"{sys.executable} -m pip install -q pyngrok==6.1.0 aiohttp nest_asyncio requests", shell=True)
 
 # Verify GPU setup
 print("Verifying GPU setup...")
-!nvidia-smi
-!ls /usr/local/cuda
+subprocess.run("nvidia-smi", shell=True)
+subprocess.run("ls /usr/local/cuda", shell=True)
 
+# Now import the packages after installation
 print("Starting main script...")
-import os
 import time
 import asyncio
 import nest_asyncio
 import aiohttp
 import requests
-import subprocess
 from pyngrok import ngrok, conf
 
 # Apply nest_asyncio for Jupyter compatibility
