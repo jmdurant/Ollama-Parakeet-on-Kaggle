@@ -236,6 +236,7 @@ class ClinicalRAGService:
     """RAG service for clinical document retrieval and enhanced Q&A"""
     
     def __init__(self):
+        self.collection_name = "clinical_documents"
         self.collection = None
         self.chroma_client = None
         self.embeddings_model = None
@@ -251,12 +252,12 @@ class ClinicalRAGService:
         # Create or get collection
         try:
             self.collection = self.chroma_client.create_collection(
-                name="clinical_docs",
+                name=self.collection_name,
                 metadata={"description": "Clinical reference documents"}
             )
             logger.info("Created new ChromaDB collection")
         except:
-            self.collection = self.chroma_client.get_collection("clinical_docs")
+            self.collection = self.chroma_client.get_collection(self.collection_name)
             logger.info(f"Loaded existing collection with {self.collection.count()} documents")
             self.documents_indexed = self.collection.count()
         
@@ -692,7 +693,7 @@ async def create_reverse_proxy():
                     return web.json_response({
                         "status": "ready" if rag_service.collection else "not_initialized",
                         "documents_indexed": rag_service.documents_indexed,
-                        "collection_name": "clinical_docs"
+                        "collection_name": rag_service.collection_name if rag_service else "not_initialized"
                     })
                     
                 elif path == '/api/rag/search':
