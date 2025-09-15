@@ -69,7 +69,7 @@ import numpy as np
 
 # RAG imports
 import chromadb
-from chromadb.config import Settings
+# ChromaDB no longer needs Settings import for basic usage
 import PyPDF2
 from typing import List, Tuple
 import hashlib
@@ -245,11 +245,8 @@ class ClinicalRAGService:
         """Initialize ChromaDB and embeddings"""
         logger.info("Initializing RAG service...")
         
-        # Initialize ChromaDB with persistent storage
-        self.chroma_client = chromadb.Client(Settings(
-            chroma_db_impl="duckdb+parquet",
-            persist_directory="/kaggle/working/chromadb"
-        ))
+        # Initialize ChromaDB (in-memory for Kaggle, using current API)
+        self.chroma_client = chromadb.Client()
         
         # Create or get collection
         try:
