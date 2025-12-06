@@ -693,8 +693,8 @@ async def create_reverse_proxy():
         path = request.path_qs
         
         # Determine target based on path
-        if path.startswith('/api/chat') or path.startswith('/api/tags') or path.startswith('/api/embeddings'):
-            # Route to Ollama
+        if path.startswith('/api/chat') or path.startswith('/api/generate') or path.startswith('/api/tags') or path.startswith('/api/embeddings'):
+            # Route to Ollama (includes /api/generate for telehealth-transcription-pipeline)
             target_url = f"http://localhost:11434{path}"
         elif path.startswith('/api/rag'):
             # Handle RAG endpoints directly

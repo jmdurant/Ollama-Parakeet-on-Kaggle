@@ -133,6 +133,17 @@ curl -X POST https://your-domain.ngrok-free.app/api/chat \
   }'
 ```
 
+### Ollama Generate (for telehealth-transcription-pipeline)
+```bash
+curl -X POST https://your-domain.ngrok-free.app/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-oss:20b",
+    "prompt": "Summarize this transcript...",
+    "stream": false
+  }'
+```
+
 ### Parakeet Speech-to-Text
 ```bash
 # Transcribe audio file
