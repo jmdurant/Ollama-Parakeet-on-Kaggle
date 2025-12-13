@@ -38,15 +38,14 @@ subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multi
 # RAG dependencies
 subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
 
-# Fix scipy 1.15.x bug on Kaggle (sph_legendre_p ufunc error)
-# See: https://github.com/scipy/scipy/issues/22877
-print("Fixing scipy 1.15.x compatibility issue...")
-subprocess.run(f"{sys.executable} -m pip install -q 'scipy<1.15'", shell=True)
-
 # Upgrade librosa to 0.11.0+ for NumPy 2.0 compatibility
 # NeMo may pull older librosa which uses deprecated np.bool/np.complex
 print("Upgrading librosa for NumPy 2.0 compatibility...")
 subprocess.run(f"{sys.executable} -m pip install -q 'librosa>=0.11.0'", shell=True)
+
+# NOTE: Do NOT downgrade scipy - scipy<1.15 brings wheels compiled against numpy 1.x
+# which causes ABI conflicts with Kaggle's numpy 2.x (sph_legendre_p ufunc errors)
+# See: https://github.com/scipy/scipy/issues/22877 - issue was conflicting numpy versions
 
 # Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
 print("Fixing CUDA compatibility...")
