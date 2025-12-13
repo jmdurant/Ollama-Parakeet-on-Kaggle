@@ -28,18 +28,18 @@ subprocess.run(f"{sys.executable} -m pip install -q torch torchvision torchaudio
 subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr] omegaconf ffmpeg-python python-dotenv", shell=True)
 subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
 
+# RAG dependencies
+subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
+
 # Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
 print("Fixing CUDA compatibility...")
 subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
 
-# Fix NumPy compatibility - NeMo requires NumPy 1.x, Kaggle has NumPy 2.x
-print("Fixing NumPy compatibility...")
-subprocess.run(f"{sys.executable} -m pip install -q 'numpy<2.0'", shell=True)
-# Reinstall scipy and numba to be compatible with NumPy 1.x
-subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall 'scipy<1.14' numba", shell=True)
-
-# RAG dependencies
-subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
+# Fix NumPy compatibility - MUST be done LAST after all other installs
+# NeMo and other packages require NumPy 1.x, Kaggle pre-installs NumPy 2.x
+print("Fixing NumPy compatibility (this must be last)...")
+subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall 'numpy==1.26.4'", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall 'scipy==1.13.1' numba matplotlib", shell=True)
 
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
