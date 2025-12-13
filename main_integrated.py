@@ -21,25 +21,17 @@ subprocess.run("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-driv
 
 print("Installing Python dependencies for both services...")
 
-# CRITICAL: Pin NumPy <2 FIRST before anything else to avoid ABI incompatibility
-# Kaggle's pre-installed scipy/matplotlib are compiled against NumPy 1.x
-print("Pinning NumPy <2 to avoid ABI incompatibility with pre-installed packages...")
-subprocess.run(f"{sys.executable} -m pip install -q 'numpy<2'", shell=True)
-
-# Reinstall scipy and matplotlib to be compatible with numpy 1.x
-print("Reinstalling scipy and matplotlib for NumPy 1.x compatibility...")
-subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall --no-cache-dir 'scipy<1.14' 'matplotlib<3.9'", shell=True)
-
 # Ollama dependencies
 subprocess.run(f"{sys.executable} -m pip install -q pyngrok==6.1.0 aiohttp nest_asyncio requests", shell=True)
 
-# Parakeet dependencies - using latest versions for compatibility
+# Parakeet/NeMo dependencies
 subprocess.run(f"{sys.executable} -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121", shell=True)
 
-# Install NeMo toolkit (stable release works with numpy<2)
-print("Installing NeMo toolkit...")
+# Install NeMo from main branch - has NumPy 2.x fix (PR #15166, merged Dec 9 2025)
+# See: https://github.com/NVIDIA-NeMo/NeMo/issues/15034
+print("Installing NeMo toolkit from main branch (NumPy 2.x compatible - PR #15166)...")
 subprocess.run(f"{sys.executable} -m pip install -q omegaconf ffmpeg-python python-dotenv Cython", shell=True)
-subprocess.run(f"{sys.executable} -m pip install -q 'nemo_toolkit[asr]'", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q 'nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main'", shell=True)
 
 subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
 
@@ -49,10 +41,6 @@ subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber se
 # Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
 print("Fixing CUDA compatibility...")
 subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
-
-# Ensure numpy stayed at <2 (some packages may have upgraded it)
-print("Ensuring NumPy <2 is still installed...")
-subprocess.run(f"{sys.executable} -m pip install -q 'numpy<2'", shell=True)
 
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
