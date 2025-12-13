@@ -28,6 +28,12 @@ subprocess.run(f"{sys.executable} -m pip install -q torch torchvision torchaudio
 subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr] omegaconf ffmpeg-python python-dotenv", shell=True)
 subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
 
+# Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
+print("Fixing CUDA compatibility...")
+subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
+# Reinstall compatible numba (uses its own CUDA bindings)
+subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall numba", shell=True)
+
 # RAG dependencies
 subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
 
