@@ -43,6 +43,11 @@ subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber se
 print("Fixing scipy 1.15.x compatibility issue...")
 subprocess.run(f"{sys.executable} -m pip install -q 'scipy<1.15'", shell=True)
 
+# Upgrade librosa to 0.11.0+ for NumPy 2.0 compatibility
+# NeMo may pull older librosa which uses deprecated np.bool/np.complex
+print("Upgrading librosa for NumPy 2.0 compatibility...")
+subprocess.run(f"{sys.executable} -m pip install -q 'librosa>=0.11.0'", shell=True)
+
 # Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
 print("Fixing CUDA compatibility...")
 subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
