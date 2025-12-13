@@ -20,38 +20,16 @@ subprocess.run("sudo apt-get update -y", shell=True)
 subprocess.run("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-drivers ocl-icd-opencl-dev nvidia-cuda-toolkit ffmpeg", shell=True)
 
 print("Installing Python dependencies for both services...")
-
 # Ollama dependencies
 subprocess.run(f"{sys.executable} -m pip install -q pyngrok==6.1.0 aiohttp nest_asyncio requests", shell=True)
 
-# Parakeet/NeMo dependencies
+# Parakeet dependencies - using latest versions for compatibility
 subprocess.run(f"{sys.executable} -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121", shell=True)
-
-# Install NeMo from main branch - has NumPy 2.x fix (PR #15166, merged Dec 9 2025)
-# See: https://github.com/NVIDIA-NeMo/NeMo/issues/15034
-print("Installing NeMo toolkit from main branch (NumPy 2.x compatible - PR #15166)...")
-subprocess.run(f"{sys.executable} -m pip install -q omegaconf ffmpeg-python python-dotenv Cython", shell=True)
-subprocess.run(f"{sys.executable} -m pip install -q 'nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main'", shell=True)
-
+subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr] omegaconf ffmpeg-python python-dotenv", shell=True)
 subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
 
 # RAG dependencies
 subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
-
-# Upgrade librosa to 0.11.0+ for NumPy 2.0 compatibility
-# NeMo may pull older librosa which uses deprecated np.bool/np.complex
-print("Upgrading librosa for NumPy 2.0 compatibility...")
-subprocess.run(f"{sys.executable} -m pip install -q 'librosa>=0.11.0'", shell=True)
-
-# Force reinstall scipy to get wheel compiled for numpy 2.x
-# Kaggle's pre-installed scipy was compiled against numpy 1.x - causes ABI mismatch
-# See: https://github.com/scipy/scipy/issues/22877 - issue was conflicting numpy versions
-print("Reinstalling scipy for NumPy 2.x compatibility...")
-subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall --no-cache-dir scipy", shell=True)
-
-# Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
-print("Fixing CUDA compatibility...")
-subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
 
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
@@ -115,7 +93,7 @@ os.environ['OLLAMA_KEEP_ALIVE'] = '0'  # Never unload models (0 = keep forever)
 
 # Parakeet configuration
 PARAKEET_CONFIG = {
-    "MODEL_NAME": "nvidia/parakeet-tdt-0.6b-v3",
+    "MODEL_NAME": "nvidia/parakeet-tdt-0.6b-v2",
     "TARGET_SR": 16000,
     "MODEL_PRECISION": "fp16",
     "DEVICE": "cuda",  # Will auto-select available GPU
