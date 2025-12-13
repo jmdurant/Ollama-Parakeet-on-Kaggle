@@ -20,6 +20,12 @@ subprocess.run("sudo apt-get update -y", shell=True)
 subprocess.run("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-drivers ocl-icd-opencl-dev nvidia-cuda-toolkit ffmpeg", shell=True)
 
 print("Installing Python dependencies for both services...")
+
+# Pin numpy to Kaggle's version FIRST to prevent version conflicts
+# scipy is pre-compiled against this version - upgrading numpy breaks it
+print("Pinning numpy to Kaggle's version to prevent conflicts...")
+subprocess.run(f"{sys.executable} -m pip install -q 'numpy==2.3.4'", shell=True)
+
 # Ollama dependencies
 subprocess.run(f"{sys.executable} -m pip install -q pyngrok==6.1.0 aiohttp nest_asyncio requests", shell=True)
 
@@ -30,6 +36,10 @@ subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multi
 
 # RAG dependencies
 subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
+
+# Fix CUDA compatibility issue - cuda-python conflicts with Kaggle's CUDA driver
+print("Fixing CUDA compatibility...")
+subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
 
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
