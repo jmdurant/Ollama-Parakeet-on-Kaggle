@@ -37,9 +37,12 @@ subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multi
 # RAG dependencies
 subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
 
-# Fix CUDA compatibility issue - cuda-python conflicts with Kaggle's CUDA driver
+# Fix CUDA compatibility issue
+# The default cuda-python has version mismatch with Kaggle's driver
+# Install numba-cuda with correct CUDA 12 bindings instead
 print("Fixing CUDA compatibility...")
 subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q 'numba-cuda[cu12]'", shell=True)
 
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
