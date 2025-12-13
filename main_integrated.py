@@ -31,8 +31,12 @@ subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multi
 # Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
 print("Fixing CUDA compatibility...")
 subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
-# Reinstall compatible numba (uses its own CUDA bindings)
-subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall numba", shell=True)
+
+# Fix NumPy compatibility - NeMo requires NumPy 1.x, Kaggle has NumPy 2.x
+print("Fixing NumPy compatibility...")
+subprocess.run(f"{sys.executable} -m pip install -q 'numpy<2.0'", shell=True)
+# Reinstall scipy and numba to be compatible with NumPy 1.x
+subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall 'scipy<1.14' numba", shell=True)
 
 # RAG dependencies
 subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
