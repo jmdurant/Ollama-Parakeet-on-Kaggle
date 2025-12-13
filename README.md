@@ -73,7 +73,7 @@ Configure this to suit your needs and demands
 **Integrated Version (main_integrated.py)**:
 - `gpt-oss:20b` (GPT-4 Turbo comparable, Mixture-of-Experts)
 - `nomic-embed-text` (768-dim embeddings for RAG)
-- `nvidia/parakeet-tdt-0.6b-v2` (auto-downloaded STT)
+- `nvidia/parakeet-tdt-0.6b-v3` (auto-downloaded STT, latest version)
 - Additional models can be pulled on-demand
 
 ## Usage

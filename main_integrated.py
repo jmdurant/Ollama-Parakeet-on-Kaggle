@@ -25,7 +25,12 @@ subprocess.run(f"{sys.executable} -m pip install -q pyngrok==6.1.0 aiohttp nest_
 
 # Parakeet dependencies - using latest versions for compatibility
 subprocess.run(f"{sys.executable} -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121", shell=True)
-subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr] omegaconf ffmpeg-python python-dotenv", shell=True)
+
+# Install NeMo from main branch - has NumPy 2.x compatibility fix (PR #11447)
+print("Installing NeMo from main branch (NumPy 2.x compatible)...")
+subprocess.run(f"{sys.executable} -m pip install -q omegaconf ffmpeg-python python-dotenv Cython", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q 'nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main'", shell=True)
+
 subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
 
 # RAG dependencies
@@ -34,12 +39,6 @@ subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber se
 # Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
 print("Fixing CUDA compatibility...")
 subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
-
-# Fix NumPy compatibility - MUST be done LAST after all other installs
-# NeMo and other packages require NumPy 1.x, Kaggle pre-installs NumPy 2.x
-print("Fixing NumPy compatibility (this must be last)...")
-subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall 'numpy==1.26.4'", shell=True)
-subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall 'scipy==1.13.1' numba matplotlib", shell=True)
 
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
@@ -103,7 +102,7 @@ os.environ['OLLAMA_KEEP_ALIVE'] = '0'  # Never unload models (0 = keep forever)
 
 # Parakeet configuration
 PARAKEET_CONFIG = {
-    "MODEL_NAME": "nvidia/parakeet-tdt-0.6b-v2",
+    "MODEL_NAME": "nvidia/parakeet-tdt-0.6b-v3",
     "TARGET_SR": 16000,
     "MODEL_PRECISION": "fp16",
     "DEVICE": "cuda",  # Will auto-select available GPU
