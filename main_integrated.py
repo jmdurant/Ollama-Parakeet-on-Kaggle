@@ -27,11 +27,10 @@ subprocess.run(f"{sys.executable} -m pip install -q pyngrok==6.1.0 aiohttp nest_
 # Parakeet/NeMo dependencies
 subprocess.run(f"{sys.executable} -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121", shell=True)
 
-# Install NeMo from main branch - has NumPy 2.x fix (PR #15166, merged Dec 9 2025)
-# See: https://github.com/NVIDIA-NeMo/NeMo/issues/15034
-print("Installing NeMo toolkit from main branch (NumPy 2.x compatible - PR #15166)...")
+# Install NeMo toolkit (stable release, works with numpy<2)
+print("Installing NeMo toolkit...")
 subprocess.run(f"{sys.executable} -m pip install -q omegaconf ffmpeg-python python-dotenv Cython", shell=True)
-subprocess.run(f"{sys.executable} -m pip install -q 'nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main'", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q 'nemo_toolkit[asr]'", shell=True)
 
 subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
 
@@ -42,6 +41,11 @@ subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber se
 # See: https://github.com/scipy/scipy/issues/22877
 print("Fixing scipy 1.15.x compatibility issue...")
 subprocess.run(f"{sys.executable} -m pip install -q 'scipy<1.15'", shell=True)
+
+# Fix np.bool removed in NumPy 2.0 - some NeMo dependencies still use it
+# Pin numpy<2 since not all transitive dependencies are NumPy 2.x compatible
+print("Pinning NumPy <2 for dependency compatibility...")
+subprocess.run(f"{sys.executable} -m pip install -q 'numpy<2'", shell=True)
 
 # Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
 print("Fixing CUDA compatibility...")
