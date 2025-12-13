@@ -43,9 +43,11 @@ subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber se
 print("Upgrading librosa for NumPy 2.0 compatibility...")
 subprocess.run(f"{sys.executable} -m pip install -q 'librosa>=0.11.0'", shell=True)
 
-# NOTE: Do NOT downgrade scipy - scipy<1.15 brings wheels compiled against numpy 1.x
-# which causes ABI conflicts with Kaggle's numpy 2.x (sph_legendre_p ufunc errors)
+# Force reinstall scipy to get wheel compiled for numpy 2.x
+# Kaggle's pre-installed scipy was compiled against numpy 1.x - causes ABI mismatch
 # See: https://github.com/scipy/scipy/issues/22877 - issue was conflicting numpy versions
+print("Reinstalling scipy for NumPy 2.x compatibility...")
+subprocess.run(f"{sys.executable} -m pip install -q --force-reinstall --no-cache-dir scipy", shell=True)
 
 # Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
 print("Fixing CUDA compatibility...")
