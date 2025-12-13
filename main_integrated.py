@@ -38,6 +38,11 @@ subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multi
 # RAG dependencies
 subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
 
+# Fix scipy 1.15.x bug on Kaggle (sph_legendre_p ufunc error)
+# See: https://github.com/scipy/scipy/issues/22877
+print("Fixing scipy 1.15.x compatibility issue...")
+subprocess.run(f"{sys.executable} -m pip install -q 'scipy<1.15'", shell=True)
+
 # Fix CUDA compatibility issue on Kaggle - cuda-python conflicts with Kaggle's CUDA driver
 print("Fixing CUDA compatibility...")
 subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
