@@ -32,7 +32,7 @@ subprocess.run(f"{sys.executable} -m pip install -q pyngrok==6.1.0 aiohttp nest_
 # Parakeet dependencies - using latest versions for compatibility
 subprocess.run(f"{sys.executable} -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121", shell=True)
 subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr] omegaconf ffmpeg-python python-dotenv", shell=True)
-subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart jinja2 psutil", shell=True)
 
 # RAG dependencies
 subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
@@ -79,6 +79,7 @@ import nemo.collections.asr as nemo_asr
 from omegaconf import open_dict
 import torchaudio
 import numpy as np
+import psutil
 
 # RAG imports
 import chromadb
@@ -106,7 +107,7 @@ os.environ['OLLAMA_KEEP_ALIVE'] = '0'  # Never unload models (0 = keep forever)
 
 # Parakeet configuration
 PARAKEET_CONFIG = {
-    "MODEL_NAME": "nvidia/parakeet-tdt-0.6b-v2",
+    "MODEL_NAME": "nvidia/parakeet-tdt-0.6b-v3",
     "TARGET_SR": 16000,
     "MODEL_PRECISION": "fp16",
     "DEVICE": "cuda",  # Will auto-select available GPU
@@ -565,6 +566,7 @@ async def health_check():
     return {"status": "ok", "service": "parakeet"}
 
 @parakeet_app.post("/transcribe")
+@parakeet_app.post("/audio/transcriptions")
 async def transcribe_endpoint(
     file: UploadFile = File(...),
     include_timestamps: bool = Form(False),
@@ -577,14 +579,110 @@ async def transcribe_endpoint(
         content = await file.read()
         temp_audio.write(content)
         temp_audio.close()
-        
+
         # Transcribe
         result = await parakeet_service.transcribe(temp_audio.name, include_timestamps)
         return JSONResponse(content=result)
-        
+
     finally:
         if os.path.exists(temp_audio.name):
             os.unlink(temp_audio.name)
+
+
+@parakeet_app.get("/metrics")
+async def metrics_endpoint():
+    """Return current system resource usage for the UI."""
+    cpu_percent = psutil.cpu_percent(interval=0.1)
+    memory = psutil.virtual_memory()
+
+    # Get GPU memory info if available
+    gpu_info = []
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            free_mem, total_mem = torch.cuda.mem_get_info(i)
+            gpu_info.append({
+                "gpu_id": i,
+                "free_gb": round(free_mem / (1024**3), 2),
+                "total_gb": round(total_mem / (1024**3), 2),
+                "used_percent": round((1 - free_mem/total_mem) * 100, 1)
+            })
+
+    return {
+        "cpu_percent": cpu_percent,
+        "ram_percent": memory.percent,
+        "ram_used_gb": round(memory.used / (1024**3), 2),
+        "ram_total_gb": round(memory.total / (1024**3), 2),
+        "gpu": gpu_info
+    }
+
+
+@parakeet_app.get("/status")
+async def status_endpoint():
+    """Return current transcription progress status."""
+    return {
+        "status": "idle",
+        "progress_percent": 0,
+        "current_chunk": 0,
+        "total_chunks": 0,
+        "partial_text": "",
+        "model_loaded": parakeet_service.model is not None,
+        "device": str(parakeet_service.device) if parakeet_service.device else "not initialized"
+    }
+
+
+@parakeet_app.websocket("/ws")
+@parakeet_app.websocket("/ws/transcribe")
+async def websocket_transcribe(websocket: WebSocket):
+    """WebSocket endpoint for streaming ASR (compatible with pipeline)."""
+    await websocket.accept()
+
+    try:
+        # Receive configuration (optional)
+        config_msg = await websocket.receive_text()
+        config = json.loads(config_msg) if config_msg else {}
+        logger.info(f"WebSocket config: {config}")
+
+        # Accumulate audio data
+        audio_chunks = []
+
+        while True:
+            try:
+                # Try to receive binary audio data
+                data = await websocket.receive_bytes()
+                audio_chunks.append(data)
+                await websocket.send_json({"status": "queued"})
+            except Exception as e:
+                # Check if it's an end signal
+                try:
+                    msg = await websocket.receive_text()
+                    msg_data = json.loads(msg)
+                    if msg_data.get("action") == "end_of_audio":
+                        break
+                except:
+                    break
+
+        # Process accumulated audio
+        if audio_chunks:
+            # Combine audio chunks
+            audio_data = b''.join(audio_chunks)
+
+            # Save to temp file
+            temp_audio = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            temp_audio.write(audio_data)
+            temp_audio.close()
+
+            try:
+                # Transcribe
+                result = await parakeet_service.transcribe(temp_audio.name, include_timestamps=False)
+                await websocket.send_json({"text": result.get("text", "")})
+            finally:
+                os.unlink(temp_audio.name)
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        await websocket.send_json({"error": str(e)})
 
 # ============================================================================
 # OLLAMA SERVICE FUNCTIONS
@@ -764,12 +862,12 @@ async def create_reverse_proxy():
                 logger.error(f"RAG endpoint error: {e}")
                 return web.json_response({"error": str(e)}, status=500)
                 
-        elif path.startswith('/transcribe') or path.startswith('/healthz') or path.startswith('/ws'):
+        elif path.startswith('/transcribe') or path.startswith('/audio/transcriptions') or path.startswith('/healthz') or path.startswith('/ws') or path.startswith('/metrics') or path.startswith('/status'):
             # Route to Parakeet
             target_url = f"http://localhost:8001{path}"
         else:
             info_text = """Service router running.
-            
+
 Endpoints:
 - /api/chat - Ollama LLM chat
 - /api/tags - List available models
@@ -778,8 +876,12 @@ Endpoints:
 - /api/rag/ingest - Add document to RAG
 - /api/rag/status - RAG system status
 - /transcribe - Parakeet STT
+- /audio/transcriptions - Parakeet STT (OpenAI compatible)
 - /healthz - Health check
-- /ws - Parakeet WebSocket"""
+- /metrics - System metrics (CPU/RAM/GPU)
+- /status - Transcription status
+- /ws - Parakeet WebSocket
+- /ws/transcribe - Parakeet WebSocket (pipeline compatible)"""
             return web.Response(text=info_text, status=200)
         
         # Forward the request
@@ -993,8 +1095,12 @@ async def main():
     print("Core Endpoints:")
     print(f"  Ollama LLM:      {base_url}/api/chat")
     print(f"  Parakeet STT:    {base_url}/transcribe")
+    print(f"  Parakeet STT:    {base_url}/audio/transcriptions (OpenAI compatible)")
     print(f"  Parakeet WS:     wss://{STATIC_DOMAIN}/ws")
+    print(f"  Parakeet WS:     wss://{STATIC_DOMAIN}/ws/transcribe (pipeline compatible)")
     print(f"  Health Check:    {base_url}/healthz")
+    print(f"  Metrics:         {base_url}/metrics")
+    print(f"  Status:          {base_url}/status")
     
     print("\nRAG Endpoints:")
     print(f"  RAG Query:       {base_url}/api/rag/query")
