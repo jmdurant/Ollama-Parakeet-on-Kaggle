@@ -105,7 +105,20 @@ os.environ['OLLAMA_GPU_LAYERS'] = '100'
 os.environ["OLLAMA_SCHED_SPREAD"] = "0,1"  # Spread across both GPUs
 os.environ['OLLAMA_KEEP_ALIVE'] = '0'  # Never unload models (0 = keep forever)
 
-# Parakeet configuration
+# Parakeet configuration - check if already defined in notebook
+# You can override these in a previous cell:
+#   MODEL_BACKEND = "onnx"  # Use ONNX for 181x faster inference on T4
+#   ONNX_MODEL_NAME = "base.int8"
+if 'MODEL_BACKEND' not in globals():
+    MODEL_BACKEND = "nemo"  # Default: "nemo" or "onnx"
+else:
+    print(f"Using MODEL_BACKEND: {MODEL_BACKEND}")
+
+if 'ONNX_MODEL_NAME' not in globals():
+    ONNX_MODEL_NAME = "base.int8"  # Options: tiny, base, small (with .int8 variants)
+else:
+    print(f"Using ONNX_MODEL_NAME: {ONNX_MODEL_NAME}")
+
 PARAKEET_CONFIG = {
     "MODEL_NAME": "nvidia/parakeet-tdt-0.6b-v3",
     "TARGET_SR": 16000,
@@ -115,11 +128,11 @@ PARAKEET_CONFIG = {
     "MAX_AUDIO_DURATION": 30,
     "VAD_THRESHOLD": 0.5,
     "PROCESSING_TIMEOUT": 60,
-    # Backend selection: "nemo" (default) or "onnx"
-    # ONNX backend is faster (181x realtime on T4 with TensorRT)
-    "MODEL_BACKEND": os.environ.get("MODEL_BACKEND", "nemo"),
-    "ONNX_MODEL_NAME": os.environ.get("ONNX_MODEL_NAME", "base.int8"),
+    # Backend selection from globals or defaults
+    "MODEL_BACKEND": MODEL_BACKEND,
+    "ONNX_MODEL_NAME": ONNX_MODEL_NAME,
 }
+print(f"Parakeet backend: {PARAKEET_CONFIG['MODEL_BACKEND']}")
 
 # Ngrok configuration - check if already defined in notebook
 if 'STATIC_DOMAIN' not in globals():
