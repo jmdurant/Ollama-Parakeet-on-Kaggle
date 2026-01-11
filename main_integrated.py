@@ -114,7 +114,11 @@ PARAKEET_CONFIG = {
     "BATCH_SIZE": 4,
     "MAX_AUDIO_DURATION": 30,
     "VAD_THRESHOLD": 0.5,
-    "PROCESSING_TIMEOUT": 60
+    "PROCESSING_TIMEOUT": 60,
+    # Backend selection: "nemo" (default) or "onnx"
+    # ONNX backend is faster (181x realtime on T4 with TensorRT)
+    "MODEL_BACKEND": os.environ.get("MODEL_BACKEND", "nemo"),
+    "ONNX_MODEL_NAME": os.environ.get("ONNX_MODEL_NAME", "base.int8"),
 }
 
 # Ngrok configuration - check if already defined in notebook
@@ -151,38 +155,50 @@ class ParakeetService:
     def __init__(self):
         self.model = None
         self.device = None
-        
+        self.backend = PARAKEET_CONFIG['MODEL_BACKEND']
+
     async def load_model(self):
         """Load Parakeet model with GPU auto-selection"""
-        logger.info(f"Loading {PARAKEET_CONFIG['MODEL_NAME']} with optimized memory...")
-        
-        with torch.inference_mode():
-            # Auto-select GPU with most free memory
-            if torch.cuda.is_available():
-                # Check memory on both GPUs
-                free_memory = []
-                for i in range(torch.cuda.device_count()):
-                    torch.cuda.set_device(i)
-                    free_mem = torch.cuda.mem_get_info()[0] / 1024**3  # GB
-                    free_memory.append(free_mem)
-                    logger.info(f"GPU {i}: {free_mem:.2f}GB free")
-                
-                # Select GPU with most free memory
-                best_gpu = free_memory.index(max(free_memory))
-                self.device = f"cuda:{best_gpu}"
-                logger.info(f"Selected GPU {best_gpu} for Parakeet")
-            else:
-                self.device = "cpu"
-            
-            # Load model with selected device
-            dtype = torch.float16 if PARAKEET_CONFIG['MODEL_PRECISION'] == "fp16" else torch.float32
-            self.model = nemo_asr.models.ASRModel.from_pretrained(
-                PARAKEET_CONFIG['MODEL_NAME'],
-                map_location=self.device
-            ).to(dtype=dtype)
-            
-            logger.info(f"Parakeet model loaded on {self.device}")
-        
+        logger.info(f"Loading {PARAKEET_CONFIG['MODEL_NAME']} with {self.backend} backend...")
+
+        # Auto-select GPU with most free memory
+        if torch.cuda.is_available():
+            free_memory = []
+            for i in range(torch.cuda.device_count()):
+                torch.cuda.set_device(i)
+                free_mem = torch.cuda.mem_get_info()[0] / 1024**3  # GB
+                free_memory.append(free_mem)
+                logger.info(f"GPU {i}: {free_mem:.2f}GB free")
+
+            best_gpu = free_memory.index(max(free_memory))
+            self.device = f"cuda:{best_gpu}"
+            logger.info(f"Selected GPU {best_gpu} for Parakeet")
+        else:
+            self.device = "cpu"
+
+        if self.backend == "onnx":
+            # Load ONNX model (install dependencies if needed)
+            try:
+                import onnx_asr
+            except ImportError:
+                logger.info("Installing onnx-asr and onnxruntime-gpu...")
+                subprocess.run([sys.executable, "-m", "pip", "install", "-q", "onnx-asr", "onnxruntime-gpu"])
+                import onnx_asr
+
+            logger.info(f"Loading ONNX model: {PARAKEET_CONFIG['ONNX_MODEL_NAME']}")
+            self.model = onnx_asr.load_model(PARAKEET_CONFIG['ONNX_MODEL_NAME'])
+            logger.info("ONNX backend ready (181x realtime on T4 with TensorRT)")
+        else:
+            # Load NeMo model (default)
+            with torch.inference_mode():
+                dtype = torch.float16 if PARAKEET_CONFIG['MODEL_PRECISION'] == "fp16" else torch.float32
+                self.model = nemo_asr.models.ASRModel.from_pretrained(
+                    PARAKEET_CONFIG['MODEL_NAME'],
+                    map_location=self.device
+                ).to(dtype=dtype)
+
+                logger.info(f"NeMo model loaded on {self.device}")
+
         # Cleanup
         gc.collect()
         torch.cuda.empty_cache()
@@ -191,51 +207,69 @@ class ParakeetService:
         """Transcribe audio file"""
         if not self.model:
             raise RuntimeError("Model not loaded")
-            
+
         try:
-            # Load and preprocess audio
-            waveform, sample_rate = torchaudio.load(audio_path)
-            
-            # Resample if needed
-            if sample_rate != PARAKEET_CONFIG['TARGET_SR']:
-                resampler = torchaudio.transforms.Resample(sample_rate, PARAKEET_CONFIG['TARGET_SR'])
-                waveform = resampler(waveform)
-            
-            # Convert to mono if stereo
-            if waveform.shape[0] > 1:
-                waveform = torch.mean(waveform, dim=0, keepdim=True)
-            
-            # Transcribe
-            with torch.no_grad():
-                # Save to temporary file for NeMo
-                temp_audio = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-                torchaudio.save(temp_audio.name, waveform, PARAKEET_CONFIG['TARGET_SR'])
-                
-                # Get transcription
-                transcriptions = self.model.transcribe([temp_audio.name])
-                
-                # Cleanup temp file
-                os.unlink(temp_audio.name)
-                
-                result = {"text": transcriptions[0] if transcriptions else ""}
-                
+            if self.backend == "onnx":
+                # ONNX backend transcription
+                result_obj = self.model.recognize(audio_path)
+
                 if include_timestamps:
-                    # Basic timestamp estimation (would need more complex logic for real timestamps)
-                    duration = waveform.shape[1] / PARAKEET_CONFIG['TARGET_SR']
-                    words = result["text"].split()
-                    word_duration = duration / len(words) if words else 0
-                    
+                    result_with_ts = result_obj.with_timestamps()
+                    text = result_with_ts.get("text", str(result_obj))
                     timestamps = {
-                        "words": [
-                            {"text": word, "start": i * word_duration, "end": (i + 1) * word_duration}
-                            for i, word in enumerate(words)
-                        ],
-                        "segments": [{"text": result["text"], "start": 0, "end": duration}]
+                        "segments": result_with_ts.get("segments", []),
+                        "words": result_with_ts.get("words", []),
                     }
-                    result["timestamps"] = timestamps
-                
-                return result
-                
+                    return {"text": text, "timestamps": timestamps}
+                else:
+                    text = result_obj.text if hasattr(result_obj, "text") else str(result_obj)
+                    return {"text": text}
+
+            else:
+                # NeMo backend transcription (default)
+                # Load and preprocess audio
+                waveform, sample_rate = torchaudio.load(audio_path)
+
+                # Resample if needed
+                if sample_rate != PARAKEET_CONFIG['TARGET_SR']:
+                    resampler = torchaudio.transforms.Resample(sample_rate, PARAKEET_CONFIG['TARGET_SR'])
+                    waveform = resampler(waveform)
+
+                # Convert to mono if stereo
+                if waveform.shape[0] > 1:
+                    waveform = torch.mean(waveform, dim=0, keepdim=True)
+
+                # Transcribe
+                with torch.no_grad():
+                    # Save to temporary file for NeMo
+                    temp_audio = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                    torchaudio.save(temp_audio.name, waveform, PARAKEET_CONFIG['TARGET_SR'])
+
+                    # Get transcription
+                    transcriptions = self.model.transcribe([temp_audio.name])
+
+                    # Cleanup temp file
+                    os.unlink(temp_audio.name)
+
+                    result = {"text": transcriptions[0] if transcriptions else ""}
+
+                    if include_timestamps:
+                        # Basic timestamp estimation (would need more complex logic for real timestamps)
+                        duration = waveform.shape[1] / PARAKEET_CONFIG['TARGET_SR']
+                        words = result["text"].split()
+                        word_duration = duration / len(words) if words else 0
+
+                        timestamps = {
+                            "words": [
+                                {"text": word, "start": i * word_duration, "end": (i + 1) * word_duration}
+                                for i, word in enumerate(words)
+                            ],
+                            "segments": [{"text": result["text"], "start": 0, "end": duration}]
+                        }
+                        result["timestamps"] = timestamps
+
+                    return result
+
         except Exception as e:
             logger.error(f"Transcription error: {e}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -626,7 +660,8 @@ async def status_endpoint():
         "total_chunks": 0,
         "partial_text": "",
         "model_loaded": parakeet_service.model is not None,
-        "device": str(parakeet_service.device) if parakeet_service.device else "not initialized"
+        "device": str(parakeet_service.device) if parakeet_service.device else "not initialized",
+        "backend": parakeet_service.backend,
     }
 
 
