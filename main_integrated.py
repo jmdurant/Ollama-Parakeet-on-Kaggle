@@ -14,7 +14,17 @@ subprocess.run("echo 'debconf debconf/frontend select Noninteractive' | sudo deb
 subprocess.run("echo 'keyboard-configuration keyboard-configuration/layoutcode string us' | sudo debconf-set-selections", shell=True)
 subprocess.run("echo 'keyboard-configuration keyboard-configuration/variantcode string' | sudo debconf-set-selections", shell=True)
 
+# ASR backend selection — do this FIRST so the installs below can be conditional.
+# Default ONNX: it's ~181x realtime on a T4 AND it avoids nemo_toolkit's dependency tree,
+# which is what fought Kaggle's numpy/scipy and never installed cleanly. Set
+# MODEL_BACKEND = "nemo" in a cell above only if you specifically need the NeMo model.
+if 'MODEL_BACKEND' not in globals():
+    MODEL_BACKEND = "onnx"
+print(f"ASR backend: {MODEL_BACKEND}")
+
 print("Installing Ollama and system dependencies...")
+# zstd is required to unpack the Ollama install bundle (upstream ollama-on-kaggle fix).
+subprocess.run("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y zstd", shell=True)
 subprocess.run("curl -fsSL https://ollama.ai/install.sh | sudo sh", shell=True)
 subprocess.run("sudo apt-get update -y", shell=True)
 subprocess.run("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-drivers ocl-icd-opencl-dev nvidia-cuda-toolkit ffmpeg", shell=True)
@@ -29,20 +39,28 @@ subprocess.run(f"{sys.executable} -m pip install -q 'numpy==2.3.4'", shell=True)
 # Ollama dependencies
 subprocess.run(f"{sys.executable} -m pip install -q pyngrok==6.1.0 aiohttp nest_asyncio requests", shell=True)
 
-# Parakeet dependencies - using latest versions for compatibility
-subprocess.run(f"{sys.executable} -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121", shell=True)
-subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr] omegaconf ffmpeg-python python-dotenv", shell=True)
-subprocess.run(f"{sys.executable} -m pip install -q fastapi uvicorn python-multipart jinja2 psutil", shell=True)
+# torch/torchaudio are needed by BOTH backends (audio load/resample + GPU selection). torchvision
+# is unused — dropped. Light shared deps here; the heavy NeMo tree is installed only on demand.
+subprocess.run(f"{sys.executable} -m pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu121", shell=True)
+subprocess.run(f"{sys.executable} -m pip install -q omegaconf ffmpeg-python python-dotenv fastapi uvicorn python-multipart jinja2 psutil", shell=True)
+
+if MODEL_BACKEND == "onnx":
+    # ONNX Runtime GPU + onnx-asr — self-contained, no NeMo, no numpy/scipy fight.
+    # Pin onnxruntime-gpu to a CUDA-12 wheel: the latest is built against CUDA 13
+    # (libcudart.so.13) which Kaggle's image lacks, so `import onnxruntime` crashes.
+    # Verified on Kaggle GPU: 1.22.0 loads + runs on CUDAExecutionProvider. soundfile
+    # is onnx-asr's audio backend for reading the wav.
+    subprocess.run(f"{sys.executable} -m pip install -q onnx-asr 'onnxruntime-gpu==1.22.0' soundfile", shell=True)
+else:
+    # NeMo path (only when explicitly requested): heavy tree that conflicts with Kaggle's numpy.
+    print("Installing NeMo (heavy — may fight numpy/scipy on Kaggle)...")
+    subprocess.run(f"{sys.executable} -m pip install -q nemo_toolkit[asr]", shell=True)
+    # numba-cuda fix is only needed for the NeMo/torch CUDA bindings on Kaggle's driver.
+    subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
+    subprocess.run(f"{sys.executable} -m pip install -q 'numba-cuda[cu12]'", shell=True)
 
 # RAG dependencies
 subprocess.run(f"{sys.executable} -m pip install -q chromadb pypdf pdfplumber sentence-transformers", shell=True)
-
-# Fix CUDA compatibility issue
-# The default cuda-python has version mismatch with Kaggle's driver
-# Install numba-cuda with correct CUDA 12 bindings instead
-print("Fixing CUDA compatibility...")
-subprocess.run(f"{sys.executable} -m pip uninstall -y cuda-python cuda-bindings", shell=True)
-subprocess.run(f"{sys.executable} -m pip install -q 'numba-cuda[cu12]'", shell=True)
 
 # Verify GPU setup
 print("Verifying dual T4 GPU setup...")
@@ -74,9 +92,9 @@ from fastapi.responses import JSONResponse
 import uvicorn
 from pydantic import BaseModel
 
-# NeMo ASR for Parakeet
-import nemo.collections.asr as nemo_asr
-from omegaconf import open_dict
+# NeMo ASR is imported LAZILY inside the loader (only when MODEL_BACKEND == "nemo"). A
+# top-level `import nemo` here also runs in ONNX mode, pulling NeMo's heavy dependency tree
+# into the process and crashing on Kaggle's numpy/scipy — the exact "never got it working".
 import torchaudio
 import numpy as np
 import psutil
@@ -107,17 +125,25 @@ os.environ['OLLAMA_KEEP_ALIVE'] = '0'  # Never unload models (0 = keep forever)
 
 # Parakeet configuration - check if already defined in notebook
 # You can override these in a previous cell:
-#   MODEL_BACKEND = "onnx"  # Use ONNX for 181x faster inference on T4
-#   ONNX_MODEL_NAME = "base.int8"
+#   MODEL_BACKEND = "onnx"     # Use ONNX (fast, no NeMo deps)
+#   ONNX_MODEL_NAME = "nemo-parakeet-tdt-0.6b-v3"
+#   ONNX_QUANTIZATION = "int8" # or "" for fp32
 if 'MODEL_BACKEND' not in globals():
-    MODEL_BACKEND = "nemo"  # Default: "nemo" or "onnx"
+    MODEL_BACKEND = "onnx"  # Default: "onnx" (fast, no NeMo deps) or "nemo"
 else:
     print(f"Using MODEL_BACKEND: {MODEL_BACKEND}")
 
+# onnx_asr model registry name (NOT a Whisper-style "base.int8" string — that never loaded
+# Parakeet). Verified working on Kaggle GPU. Quantization is a separate load_model() arg.
 if 'ONNX_MODEL_NAME' not in globals():
-    ONNX_MODEL_NAME = "base.int8"  # Options: tiny, base, small (with .int8 variants)
+    ONNX_MODEL_NAME = "nemo-parakeet-tdt-0.6b-v3"
 else:
     print(f"Using ONNX_MODEL_NAME: {ONNX_MODEL_NAME}")
+
+if 'ONNX_QUANTIZATION' not in globals():
+    ONNX_QUANTIZATION = "int8"  # "int8" for the fast quantized weights, "" for fp32
+else:
+    print(f"Using ONNX_QUANTIZATION: {ONNX_QUANTIZATION}")
 
 PARAKEET_CONFIG = {
     "MODEL_NAME": "nvidia/parakeet-tdt-0.6b-v3",
@@ -131,6 +157,7 @@ PARAKEET_CONFIG = {
     # Backend selection from globals or defaults
     "MODEL_BACKEND": MODEL_BACKEND,
     "ONNX_MODEL_NAME": ONNX_MODEL_NAME,
+    "ONNX_QUANTIZATION": ONNX_QUANTIZATION,
 }
 print(f"Parakeet backend: {PARAKEET_CONFIG['MODEL_BACKEND']}")
 
@@ -195,14 +222,28 @@ class ParakeetService:
                 import onnx_asr
             except ImportError:
                 logger.info("Installing onnx-asr and onnxruntime-gpu...")
-                subprocess.run([sys.executable, "-m", "pip", "install", "-q", "onnx-asr", "onnxruntime-gpu"])
+                # Pin CUDA-12 wheel — latest onnxruntime-gpu needs libcudart.so.13 (CUDA 13),
+                # absent on Kaggle, so import crashes. Verified: 1.22.0 runs on GPU here.
+                subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                                "onnx-asr", "onnxruntime-gpu==1.22.0", "soundfile"])
                 import onnx_asr
 
-            logger.info(f"Loading ONNX model: {PARAKEET_CONFIG['ONNX_MODEL_NAME']}")
-            self.model = onnx_asr.load_model(PARAKEET_CONFIG['ONNX_MODEL_NAME'])
-            logger.info("ONNX backend ready (181x realtime on T4 with TensorRT)")
+            # Route ONNX inference onto the GPU explicitly. Without providers, onnxruntime-gpu
+            # silently falls back to CPU. quantization="int8" selects the fast quantized weights.
+            onnx_providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
+                              if torch.cuda.is_available() else ["CPUExecutionProvider"])
+            quant = PARAKEET_CONFIG.get("ONNX_QUANTIZATION") or None
+            logger.info(f"Loading ONNX model: {PARAKEET_CONFIG['ONNX_MODEL_NAME']} "
+                        f"(quant={quant}, providers={onnx_providers})")
+            self.model = onnx_asr.load_model(
+                PARAKEET_CONFIG['ONNX_MODEL_NAME'],
+                quantization=quant,
+                providers=onnx_providers,
+            )
+            logger.info("ONNX backend ready (GPU via CUDAExecutionProvider)")
         else:
-            # Load NeMo model (default)
+            # Load NeMo model — imported HERE (not at top) so ONNX runs never touch NeMo.
+            import nemo.collections.asr as nemo_asr
             with torch.inference_mode():
                 dtype = torch.float16 if PARAKEET_CONFIG['MODEL_PRECISION'] == "fp16" else torch.float32
                 self.model = nemo_asr.models.ASRModel.from_pretrained(
