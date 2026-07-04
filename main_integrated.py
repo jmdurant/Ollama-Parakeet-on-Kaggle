@@ -161,16 +161,30 @@ PARAKEET_CONFIG = {
 }
 print(f"Parakeet backend: {PARAKEET_CONFIG['MODEL_BACKEND']}")
 
-# Ngrok configuration - check if already defined in notebook
+# Ngrok configuration. Precedence: an explicit cell global > Kaggle Secrets > placeholder.
+# Kaggle Secrets (Add-ons -> Secrets in the editor) is the .env-style store — the values
+# never live in the notebook source. Add secrets named NGROK_TOKEN and NGROK_STATIC_DOMAIN.
+if 'STATIC_DOMAIN' not in globals() or 'NGROK_TOKEN' not in globals():
+    try:
+        from kaggle_secrets import UserSecretsClient
+        _secrets = UserSecretsClient()
+        if 'NGROK_TOKEN' not in globals():
+            NGROK_TOKEN = _secrets.get_secret("NGROK_TOKEN")
+        if 'STATIC_DOMAIN' not in globals():
+            STATIC_DOMAIN = _secrets.get_secret("NGROK_STATIC_DOMAIN")
+        print("Loaded ngrok config from Kaggle Secrets")
+    except Exception as e:
+        print(f"Kaggle Secrets unavailable ({e}); set NGROK_TOKEN/STATIC_DOMAIN in a cell.")
+
 if 'STATIC_DOMAIN' not in globals():
-    STATIC_DOMAIN = "your-static-domain.ngrok-free.app"  # Replace with your ngrok static domain
-    print("Warning: Using default STATIC_DOMAIN. Define it in a previous cell to use your own.")
+    STATIC_DOMAIN = "your-static-domain.ngrok-free.app"  # placeholder — set via secret or cell
+    print("Warning: Using placeholder STATIC_DOMAIN.")
 else:
     print(f"Using STATIC_DOMAIN: {STATIC_DOMAIN}")
 
 if 'NGROK_TOKEN' not in globals():
-    NGROK_TOKEN = 'your_ngrok_auth_token'  # Replace with your ngrok auth token
-    print("Warning: Using default NGROK_TOKEN. Define it in a previous cell to use your own.")
+    NGROK_TOKEN = 'your_ngrok_auth_token'  # placeholder — set via secret or cell
+    print("Warning: Using placeholder NGROK_TOKEN.")
 else:
     print("Using NGROK_TOKEN: [hidden for security]")
 
