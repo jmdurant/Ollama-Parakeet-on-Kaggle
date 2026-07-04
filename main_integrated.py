@@ -597,7 +597,7 @@ class ClinicalRAGService:
         
         return context, sources
     
-    async def rag_chat(self, question: str, model: str = "gemma4:e4b") -> dict:
+    async def rag_chat(self, question: str, model: str = "gemma4:12b") -> dict:
         """Perform RAG-enhanced chat"""
         # Get relevant context
         context, sources = await self.query(question)
@@ -918,7 +918,7 @@ async def create_reverse_proxy():
                     data = await request.json()
                     result = await rag_service.rag_chat(
                         question=data.get('question', ''),
-                        model=data.get('model', 'gemma4:e4b')
+                        model=data.get('model', 'gemma4:12b')
                     )
                     return web.json_response(result)
                     
@@ -1078,9 +1078,9 @@ async def main():
     print("Checking and updating models (will skip if already up-to-date)...")
     print("Note: T4x2 provides 32GB total VRAM")
     
-    # Pull Gemma 4 (e4b = Effective 4B, ~3.3GB) as the summariser LLM
-    print("Checking gemma4:e4b...")
-    await run_process(['ollama', 'pull', 'gemma4:e4b'])
+    # Pull Gemma 4 12B (~8GB) as the summariser LLM (fits easily on T4x2 32GB)
+    print("Checking gemma4:12b...")
+    await run_process(['ollama', 'pull', 'gemma4:12b'])
     
     # Pull embeddings model for RAG
     print("Checking nomic-embed-text for RAG embeddings...")
@@ -1094,10 +1094,10 @@ async def main():
     
     # Pre-load primary model to avoid cold start delays
     print("\nPre-loading primary model into memory...")
-    print("Pre-loading gemma4:e4b as default model...")
+    print("Pre-loading gemma4:12b as default model...")
 
     preload_data = {
-        "model": "gemma4:e4b",
+        "model": "gemma4:12b",
         "messages": [{"role": "user", "content": "Hi"}],
         "stream": False
     }
@@ -1107,18 +1107,18 @@ async def main():
                 if resp.status == 200:
                     result = await resp.json()
                     load_time = result.get('total_duration', 0)/1_000_000_000
-                    print(f"✓ gemma4:e4b pre-loaded (took {load_time:.1f}s)")
+                    print(f"✓ gemma4:12b pre-loaded (took {load_time:.1f}s)")
                     print(f"  Model will stay in memory (OLLAMA_KEEP_ALIVE=0)")
                 else:
-                    print("⚠ Could not pre-load gemma4:e4b")
+                    print("⚠ Could not pre-load gemma4:12b")
     except Exception as e:
         print(f"⚠ Pre-load error: {e}")
 
     print("\nMemory status:")
-    print("  Gemma 4 e4b: Loaded (~3.3GB)")
+    print("  Gemma 4 12B: Loaded (~8GB)")
     print("  Parakeet: Loaded (~3GB)")
-    print("  Total: ~6-7GB used, plenty free on T4x2 (32GB)")
-    print("  Plenty of room for RAG, embeddings, or a bigger Gemma (gemma4:12b)")
+    print("  Total: ~11-12GB used, ~18GB free on T4x2 (32GB)")
+    print("  Plenty of room for RAG + embeddings; could even fit gemma4:26b")
     
     # Start Parakeet server
     print("\nStarting Parakeet STT server...")
@@ -1214,11 +1214,11 @@ async def main():
     print("\nExample usage:")
     print(f"  # Ollama chat")
     print(f"  curl -X POST {base_url}/api/chat \\")
-    print(f"    -d '{{\"model\":\"gemma4:e4b\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}]}}'")
+    print(f"    -d '{{\"model\":\"gemma4:12b\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}]}}'")
     print()
     print(f"  # RAG-enhanced chat (clinical documents)")
     print(f"  curl -X POST {base_url}/api/rag/chat \\")
-    print(f"    -d '{{\"question\":\"What are the diagnostic criteria for ADHD?\",\"model\":\"gemma4:e4b\"}}'")
+    print(f"    -d '{{\"question\":\"What are the diagnostic criteria for ADHD?\",\"model\":\"gemma4:12b\"}}'")
     print()
     print(f"  # Parakeet transcription")
     print(f"  curl -X POST {base_url}/transcribe \\")
