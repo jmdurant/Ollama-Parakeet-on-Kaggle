@@ -1033,8 +1033,9 @@ async def create_reverse_proxy():
                 logger.error(f"RAG endpoint error: {e}")
                 return web.json_response({"error": str(e)}, status=500)
                 
-        elif path.startswith('/transcribe') or path.startswith('/audio/transcriptions') or path.startswith('/healthz') or path.startswith('/ws') or path.startswith('/metrics') or path.startswith('/status'):
-            # Route to Parakeet
+        elif path.startswith('/transcribe') or path.startswith('/audio/transcriptions') or path.startswith('/healthz') or path.startswith('/ws') or path.startswith('/vosk') or path.startswith('/metrics') or path.startswith('/status'):
+            # Route to Parakeet ('/vosk' is the jigasi Vosk-protocol websocket — without it here the
+            # request falls through to the catch-all info page and jigasi never reaches the endpoint)
             target_url = f"http://localhost:8001{path}"
         else:
             info_text = """Service router running.
@@ -1052,7 +1053,8 @@ Endpoints:
 - /metrics - System metrics (CPU/RAM/GPU)
 - /status - Transcription status
 - /ws - Parakeet WebSocket
-- /ws/transcribe - Parakeet WebSocket (pipeline compatible)"""
+- /ws/transcribe - Parakeet WebSocket (pipeline compatible)
+- /vosk - Parakeet WebSocket (Vosk protocol, for jigasi live captions)"""
             return web.Response(text=info_text, status=200)
         
         # Forward the request
