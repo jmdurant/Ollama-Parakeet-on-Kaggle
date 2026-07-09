@@ -82,6 +82,7 @@ import gc
 import torch
 import tempfile
 import wave
+import hmac
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager, suppress
@@ -188,6 +189,26 @@ if 'NGROK_TOKEN' not in globals():
     print("Warning: Using placeholder NGROK_TOKEN.")
 else:
     print("Using NGROK_TOKEN: [hidden for security]")
+
+# Shared API token gating EVERY request through the reverse proxy (the ngrok host is public, so
+# without this anyone who finds the domain gets free GPU LLM + ASR). Add a Kaggle Secret named
+# GPU_API_TOKEN whose value matches the deployment's GPU_API_TOKEN (OCI Vault: gpu-api-token).
+# Clients present it as ?t=<token> OR `Authorization: Bearer <token>` — the query param exists
+# because jigasi's Vosk websocket client can ONLY be given a URL, never custom headers.
+if 'GPU_API_TOKEN' not in globals():
+    GPU_API_TOKEN = ""
+    try:
+        from kaggle_secrets import UserSecretsClient
+        GPU_API_TOKEN = UserSecretsClient().get_secret("GPU_API_TOKEN") or ""
+    except Exception:
+        pass
+if GPU_API_TOKEN:
+    print("Auth: GPU_API_TOKEN loaded - proxy will REQUIRE ?t=<token> or Bearer on every path except /healthz")
+else:
+    print("*" * 78)
+    print("WARNING: no GPU_API_TOKEN - this host is OPEN to anyone who knows the domain.")
+    print("         Add a Kaggle Secret named GPU_API_TOKEN to enforce auth.")
+    print("*" * 78)
 
 # Logging setup
 logging.basicConfig(
@@ -973,7 +994,23 @@ async def create_reverse_proxy():
     async def proxy_handler(request):
         """Route requests based on path"""
         path = request.path_qs
-        
+
+        # --- auth gate (S1) -------------------------------------------------------------------
+        # Everything (ollama, RAG, parakeet) reaches the outside world through this one handler, so
+        # gate it here. /healthz stays open for liveness probes. Accept the token as ?t=<token> OR
+        # `Authorization: Bearer <token>`: jigasi's Vosk ws client can only be handed a URL, never
+        # custom headers, so the query param is the only form that works for live captions.
+        # No token configured => open (loud warning at startup) so a fresh notebook still runs.
+        if GPU_API_TOKEN and not request.path.startswith('/healthz'):
+            supplied = request.query.get('t', '')
+            auth_hdr = request.headers.get('Authorization', '')
+            if auth_hdr.startswith('Bearer '):
+                supplied = auth_hdr[7:]
+            if not hmac.compare_digest(str(supplied), str(GPU_API_TOKEN)):
+                logger.warning(f"401 unauthorized: {request.method} {request.path}")
+                return web.json_response({"error": "unauthorized"}, status=401)
+        # --------------------------------------------------------------------------------------
+
         # Determine target based on path
         if path.startswith('/api/chat') or path.startswith('/api/generate') or path.startswith('/api/tags') or path.startswith('/api/embeddings'):
             # Route to Ollama (includes /api/generate for telehealth-transcription-pipeline)
