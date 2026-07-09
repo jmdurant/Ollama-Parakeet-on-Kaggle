@@ -81,6 +81,7 @@ import logging
 import gc
 import torch
 import tempfile
+import wave
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager, suppress
@@ -786,6 +787,73 @@ async def websocket_transcribe(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         await websocket.send_json({"error": str(e)})
+
+
+@parakeet_app.websocket("/vosk")
+async def vosk_asr(websocket: WebSocket):
+    """jigasi-compatible (Vosk protocol) streaming ASR for live captions.
+
+    jigasi's VoskTranscriptionService opens this ws, sends {"config": {...}} once, then streams
+    16 kHz mono PCM, and expects {"text": "..."} back per finalized segment ({"eof": 1} ends). It
+    lets jigasi point straight at the Kaggle GPU (same ASR the pipeline uses) — no separate STT.
+
+    This parakeet has no VAD/streaming segmenter, so we segment by a fixed ~SEG_SECS window for
+    near-live captions. Each segment's raw PCM is wrapped in a WAV header (transcribe reads audio
+    FILES, not raw PCM) and transcribed, then the buffer resets. Mirrors the /vosk endpoint in
+    parakeet-tdt-0.6b-v2-fastapi so jigasi can point at the local OR the Kaggle parakeet.
+    """
+    await websocket.accept()
+    SEG_SECS = 3
+    SEG_BYTES = 16000 * 2 * SEG_SECS   # 16 kHz * 2 bytes/sample (s16le) * seconds
+    buf = bytearray()
+
+    async def flush():
+        if not buf:
+            return
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp.close()
+        try:
+            with wave.open(tmp.name, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(16000)
+                w.writeframes(bytes(buf))
+            result = await parakeet_service.transcribe(tmp.name, include_timestamps=False)
+            text = (result.get("text") or "").strip()
+            if text:
+                await websocket.send_json({"text": text})
+        except Exception as e:
+            logger.error(f"/vosk transcribe error: {e}")
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
+
+    try:
+        while True:
+            m = await websocket.receive()
+            if m.get("type") == "websocket.disconnect":
+                break
+            data = m.get("bytes")
+            if data is not None:
+                buf.extend(data)
+                if len(buf) >= SEG_BYTES:
+                    await flush()
+                    buf.clear()
+                continue
+            txt = m.get("text")
+            if txt:
+                try:
+                    if json.loads(txt).get("eof"):
+                        break              # jigasi signalled end-of-audio
+                except Exception:
+                    pass                   # {config} or other control frame — ignore
+        await flush()                      # trailing audio
+    except WebSocketDisconnect:
+        logger.info("/vosk client disconnected")
+    except Exception as e:
+        logger.error(f"/vosk error: {e}")
 
 # ============================================================================
 # OLLAMA SERVICE FUNCTIONS
